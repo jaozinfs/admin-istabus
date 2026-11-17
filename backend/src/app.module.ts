@@ -14,6 +14,7 @@ import { AdminOperator } from './entities/admin-operator.entity';
 import { IbUser } from './entities/ib-user.entity';
 import { IbCompany } from './entities/ib-company.entity';
 import { IbWhatsappAudit } from './entities/ib-whatsapp-audit.entity';
+import { IbWhatsappScheduled } from './entities/ib-whatsapp-scheduled.entity';
 
 @Module({
   imports: [
@@ -34,7 +35,13 @@ import { IbWhatsappAudit } from './entities/ib-whatsapp-audit.entity';
       useFactory: (config: ConfigService) => ({
         type: 'postgres',
         url: config.getOrThrow<string>('DATABASE_URL'),
-        entities: [AdminOperator, IbUser, IbCompany, IbWhatsappAudit],
+        entities: [
+          AdminOperator,
+          IbUser,
+          IbCompany,
+          IbWhatsappAudit,
+          IbWhatsappScheduled,
+        ],
         synchronize: false,
         ssl:
           process.env.DATABASE_SSL === 'false'

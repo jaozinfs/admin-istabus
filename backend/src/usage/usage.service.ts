@@ -10,12 +10,23 @@ import {
 import { IbCompany } from '../entities/ib-company.entity';
 import { IbUser } from '../entities/ib-user.entity';
 import { IbWhatsappAudit } from '../entities/ib-whatsapp-audit.entity';
+import { IbWhatsappScheduled } from '../entities/ib-whatsapp-scheduled.entity';
+
+const IN_PROGRESS = new Set([
+  'preparing',
+  'queued',
+  'processing',
+  'paused',
+  'partial',
+]);
 
 @Injectable()
 export class UsageService {
   constructor(
     @InjectRepository(IbWhatsappAudit)
     private readonly audits: Repository<IbWhatsappAudit>,
+    @InjectRepository(IbWhatsappScheduled)
+    private readonly scheduled: Repository<IbWhatsappScheduled>,
     @InjectRepository(IbUser) private readonly users: Repository<IbUser>,
     @InjectRepository(IbCompany)
     private readonly companies: Repository<IbCompany>,
@@ -184,4 +195,109 @@ export class UsageService {
       top: daily.accounts.slice(0, Math.min(Math.max(limit, 1), 100)),
     };
   }
+
+  async dispatches(params: {
+    date?: string;
+    userId?: string;
+    companyId?: string;
+    page?: number;
+    pageSize?: number;
+  }) {
+    const { start, end, day } = this.dayRange(params.date);
+    const page = Math.max(1, Number(params.page) || 1);
+    const pageSize = Math.min(50, Math.max(5, Number(params.pageSize) || 20));
+
+    const qb = this.scheduled
+      .createQueryBuilder('s')
+      .where('COALESCE(s.sentAt, s.scheduledAt, s.createdAt) >= :start', {
+        start,
+      })
+      .andWhere('COALESCE(s.sentAt, s.scheduledAt, s.createdAt) < :end', {
+        end,
+      })
+      .orderBy('COALESCE(s.sentAt, s.scheduledAt, s.createdAt)', 'DESC');
+
+    if (params.userId) {
+      qb.andWhere('s.userId = :userId', { userId: params.userId });
+    }
+    if (params.companyId) {
+      qb.andWhere('s.companyId = :companyId', {
+        companyId: params.companyId,
+      });
+    }
+
+    const total = await qb.getCount();
+    const rows = await qb
+      .skip((page - 1) * pageSize)
+      .take(pageSize)
+      .getMany();
+
+    const userIds = [...new Set(rows.map((r) => r.userId))];
+    const companyIds = [
+      ...new Set(rows.map((r) => r.companyId).filter((x): x is string => !!x)),
+    ];
+    const [users, companies] = await Promise.all([
+      userIds.length
+        ? this.users.find({ where: { id: In(userIds) } })
+        : Promise.resolve([] as IbUser[]),
+      companyIds.length
+        ? this.companies.find({ where: { id: In(companyIds) } })
+        : Promise.resolve([] as IbCompany[]),
+    ]);
+    const userMap = new Map(users.map((u) => [u.id, u]));
+    const companyMap = new Map(companies.map((c) => [c.id, c]));
+
+    const items = rows.map((s) => {
+      const user = userMap.get(s.userId);
+      const company = s.companyId ? companyMap.get(s.companyId) : null;
+      const broadcastStatus = s.broadcastStatus;
+      const inProgress =
+        !!broadcastStatus && IN_PROGRESS.has(broadcastStatus);
+      const name =
+        s.broadcastTag ||
+        s.targetGroupName ||
+        (s.message ? s.message.slice(0, 80) : 'Disparo');
+      const when = s.sentAt || s.scheduledAt || s.createdAt;
+      return {
+        id: s.id,
+        senderName: user?.name || null,
+        senderEmail: user?.email || null,
+        companyName: company?.name || null,
+        companyId: s.companyId,
+        userId: s.userId,
+        name,
+        targetType: s.targetType,
+        provider: s.provider,
+        tag: s.broadcastTag,
+        date: when?.toISOString() ?? null,
+        quantity: s.broadcastTotal || 0,
+        processed: s.broadcastProcessed || 0,
+        accepted: s.broadcastAccepted || 0,
+        failed: s.broadcastFailed || 0,
+        pending: s.broadcastPending || 0,
+        delivered: s.broadcastDelivered || 0,
+        held: s.broadcastHeld || 0,
+        status: s.status,
+        broadcastStatus,
+        inProgress,
+        progressPct:
+          s.broadcastTotal > 0
+            ? Math.round(
+                ((s.broadcastProcessed || 0) / s.broadcastTotal) * 100,
+              )
+            : null,
+        errorMessage: s.errorMessage,
+      };
+    });
+
+    return {
+      day,
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      items,
+    };
+  }
 }
+

@@ -18,4 +18,21 @@ export class UsageController {
   topToday(@Query('limit') limit?: string) {
     return this.usage.topToday(limit ? Number(limit) : 30);
   }
+
+  @Get('dispatches')
+  dispatches(
+    @Query('date') date?: string,
+    @Query('companyId') companyId?: string,
+    @Query('userId') userId?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.usage.dispatches({
+      date,
+      companyId,
+      userId,
+      page: page ? Number(page) : 1,
+      pageSize: pageSize ? Number(pageSize) : 20,
+    });
+  }
 }
