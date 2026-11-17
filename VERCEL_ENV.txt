@@ -1,0 +1,12 @@
+Copie as variáveis de:
+  .env.vercel.local
+para o painel da Vercel (Production + Preview).
+
+Host do Postgres Render: dpg-d79qbkh4tr6s73d3b2q0-a.oregon-postgres.render.com
+Database: instabuss
+
+Depois do 1º deploy:
+1) Abra o site
+2) Cole ADMIN_ACCESS_SECRET
+3) Bootstrap com ADMIN_BOOTSTRAP_SECRET
+4) Guarde user/senha gerados

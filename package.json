@@ -1,0 +1,23 @@
+{
+  "name": "admin-istabus",
+  "private": true,
+  "description": "Admin CRM InstaBuss — Vite + NestJS (Vercel + Render Postgres)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build --prefix frontend",
+    "build:all": "npm run build --prefix frontend && npm run build --prefix backend",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "dev:backend": "npm run start:dev --prefix backend"
+  },
+  "dependencies": {
+    "@vercel/node": "^5.3.6",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

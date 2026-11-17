@@ -1,0 +1,36 @@
+services:
+  - type: pserv
+    name: admin-istabus-api
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    envVars:
+      - key: PORT
+        value: "3100"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: instabuss-db
+          property: connectionString
+      - key: ADMIN_ACCESS_SECRET
+        generateValue: true
+      - key: ADMIN_JWT_SECRET
+        generateValue: true
+      - key: ADMIN_BOOTSTRAP_SECRET
+        generateValue: true
+      - key: FRONTEND_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: "true"
+
+  - type: web
+    name: admin-istabus-web
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    envVars:
+      - key: VITE_API_URL
+        value: /api
