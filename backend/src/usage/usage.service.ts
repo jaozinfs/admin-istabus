@@ -139,12 +139,15 @@ export class UsageService {
         if (billing) {
           const raw = mapQuotas(billing);
           planActive = isActiveStatus(billing.stripeSubscriptionStatus);
-          const stripeMeta = planActive
+          const stripeRes = planActive
             ? await this.stripeMeta.getProductMetadata(billing.stripeProductId)
             : null;
           quotasEffective = resolveEffectiveQuotas(raw, {
             active: planActive,
-            stripeMeta,
+            stripeMeta:
+              stripeRes && Object.keys(stripeRes.meta).length > 0
+                ? stripeRes.meta
+                : null,
           });
         }
         const metaUsed = row.byCategory.meta_broadcast || 0;
