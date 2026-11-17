@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import CompanyReportPanel from '../components/CompanyReportPanel';
 import PlanEditor from '../components/PlanEditor';
 import QuotaCards from '../components/QuotaCards';
 import StripeMetaBadge from '../components/StripeMetaBadge';
@@ -51,6 +52,13 @@ export default function CompanyDetailPage() {
     void load();
   }, [id]);
 
+  useEffect(() => {
+    if (!data) return;
+    if (window.location.hash === '#relatorio') {
+      document.getElementById('relatorio')?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [data]);
+
   if (!data) return <p className="muted">{error || 'carregando…'}</p>;
 
   return (
@@ -82,6 +90,13 @@ export default function CompanyDetailPage() {
           status: {data.plan.stripeSubscriptionStatus || 'null'}
         </span>
         <StripeMetaBadge meta={data.stripeMeta} />
+        <a className="badge accent" href="#relatorio">
+          Relatório
+        </a>
+      </div>
+
+      <div style={{ marginBottom: '1rem' }}>
+        <CompanyReportPanel companyId={data.id} />
       </div>
 
       <div className="detail-grid">

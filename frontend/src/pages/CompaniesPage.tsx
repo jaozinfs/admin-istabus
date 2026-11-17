@@ -67,6 +67,7 @@ export default function CompaniesPage() {
               <th>Plano</th>
               <th>WA Meta efetivo</th>
               <th>GenIA</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -96,6 +97,18 @@ export default function CompaniesPage() {
                 </td>
                 <td className="mono">
                   {r.quotasEffective.geniaUsed}/{r.quotasEffective.geniaLimit}
+                </td>
+                <td>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      nav(`/companies/${r.id}#relatorio`);
+                    }}
+                  >
+                    Relatório
+                  </button>
                 </td>
               </tr>
             ))}

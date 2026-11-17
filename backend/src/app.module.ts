@@ -15,6 +15,7 @@ import { IbUser } from './entities/ib-user.entity';
 import { IbCompany } from './entities/ib-company.entity';
 import { IbWhatsappAudit } from './entities/ib-whatsapp-audit.entity';
 import { IbWhatsappScheduled } from './entities/ib-whatsapp-scheduled.entity';
+import { IbPost } from './entities/ib-post.entity';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { IbWhatsappScheduled } from './entities/ib-whatsapp-scheduled.entity';
           IbCompany,
           IbWhatsappAudit,
           IbWhatsappScheduled,
+          IbPost,
         ],
         synchronize: false,
         ssl:

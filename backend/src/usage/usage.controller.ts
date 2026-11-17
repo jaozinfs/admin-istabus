@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import { UsageService } from './usage.service';
 
 @Controller('usage')
@@ -34,5 +34,13 @@ export class UsageController {
       page: page ? Number(page) : 1,
       pageSize: pageSize ? Number(pageSize) : 20,
     });
+  }
+
+  @Get('company-report/:companyId')
+  companyReport(
+    @Param('companyId') companyId: string,
+    @Query('month') month?: string,
+  ) {
+    return this.usage.companyReport(companyId, month);
   }
 }

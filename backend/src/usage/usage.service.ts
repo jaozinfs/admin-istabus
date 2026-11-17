@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { StripeMetaService } from '../accounts/stripe-meta.service';
@@ -8,6 +8,7 @@ import {
   resolveEffectiveQuotas,
 } from '../accounts/quota.util';
 import { IbCompany } from '../entities/ib-company.entity';
+import { IbPost } from '../entities/ib-post.entity';
 import { IbUser } from '../entities/ib-user.entity';
 import { IbWhatsappAudit } from '../entities/ib-whatsapp-audit.entity';
 import { IbWhatsappScheduled } from '../entities/ib-whatsapp-scheduled.entity';
@@ -27,6 +28,7 @@ export class UsageService {
     private readonly audits: Repository<IbWhatsappAudit>,
     @InjectRepository(IbWhatsappScheduled)
     private readonly scheduled: Repository<IbWhatsappScheduled>,
+    @InjectRepository(IbPost) private readonly posts: Repository<IbPost>,
     @InjectRepository(IbUser) private readonly users: Repository<IbUser>,
     @InjectRepository(IbCompany)
     private readonly companies: Repository<IbCompany>,
@@ -193,6 +195,211 @@ export class UsageService {
     return {
       day: daily.day,
       top: daily.accounts.slice(0, Math.min(Math.max(limit, 1), 100)),
+    };
+  }
+
+  private monthRange(month?: string): {
+    start: Date | null;
+    end: Date | null;
+    month: string | null;
+  } {
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+      return { start: null, end: null, month: null };
+    }
+    const [y, m] = month.split('-').map(Number);
+    const start = new Date(Date.UTC(y, m - 1, 1));
+    const end = new Date(Date.UTC(y, m, 1));
+    return { start, end, month };
+  }
+
+  async companyReport(companyId: string, month?: string) {
+    const company = await this.companies.findOne({ where: { id: companyId } });
+    if (!company) throw new NotFoundException('Empresa não encontrada');
+
+    const { start, end, month: monthKey } = this.monthRange(month);
+    const scope = monthKey ? 'month' : 'lifetime';
+
+    const schedQb = this.scheduled
+      .createQueryBuilder('s')
+      .where('s.companyId = :companyId', { companyId });
+    const auditQb = this.audits
+      .createQueryBuilder('a')
+      .where('a.companyId = :companyId', { companyId });
+    const postQb = this.posts
+      .createQueryBuilder('p')
+      .where('p.companyId = :companyId', { companyId });
+
+    if (start && end) {
+      schedQb
+        .andWhere('COALESCE(s.sentAt, s.scheduledAt, s.createdAt) >= :start', {
+          start,
+        })
+        .andWhere('COALESCE(s.sentAt, s.scheduledAt, s.createdAt) < :end', {
+          end,
+        });
+      auditQb
+        .andWhere('COALESCE(a.sentAt, a.createdAt) >= :start', { start })
+        .andWhere('COALESCE(a.sentAt, a.createdAt) < :end', { end });
+      postQb
+        .andWhere('COALESCE(p.postedAt, p.createdAt) >= :start', { start })
+        .andWhere('COALESCE(p.postedAt, p.createdAt) < :end', { end });
+    }
+
+    const [
+      dispatches,
+      quantityRow,
+      statusRows,
+      messages,
+      categoryRows,
+      postsTotal,
+      postTypeRows,
+    ] = await Promise.all([
+      schedQb.getCount(),
+      this.scheduled
+        .createQueryBuilder('s')
+        .select('COALESCE(SUM(s.broadcastTotal), 0)', 'quantitySum')
+        .addSelect('COALESCE(SUM(s.broadcastAccepted), 0)', 'acceptedSum')
+        .addSelect('COALESCE(SUM(s.broadcastFailed), 0)', 'failedSum')
+        .addSelect('COALESCE(SUM(s.broadcastDelivered), 0)', 'deliveredSum')
+        .addSelect('COALESCE(SUM(s.broadcastPending), 0)', 'pendingSum')
+        .where('s.companyId = :companyId', { companyId })
+        .andWhere(
+          start && end
+            ? 'COALESCE(s.sentAt, s.scheduledAt, s.createdAt) >= :start AND COALESCE(s.sentAt, s.scheduledAt, s.createdAt) < :end'
+            : '1=1',
+          start && end ? { start, end } : {},
+        )
+        .getRawOne<{
+          quantitySum: string;
+          acceptedSum: string;
+          failedSum: string;
+          deliveredSum: string;
+          pendingSum: string;
+        }>(),
+      this.scheduled
+        .createQueryBuilder('s')
+        .select('COALESCE(s.broadcastStatus, s.status)', 'status')
+        .addSelect('COUNT(*)', 'count')
+        .where('s.companyId = :companyId', { companyId })
+        .andWhere(
+          start && end
+            ? 'COALESCE(s.sentAt, s.scheduledAt, s.createdAt) >= :start AND COALESCE(s.sentAt, s.scheduledAt, s.createdAt) < :end'
+            : '1=1',
+          start && end ? { start, end } : {},
+        )
+        .groupBy('COALESCE(s.broadcastStatus, s.status)')
+        .getRawMany<{ status: string; count: string }>(),
+      auditQb.getCount(),
+      this.audits
+        .createQueryBuilder('a')
+        .select('a.category', 'category')
+        .addSelect('COUNT(*)', 'count')
+        .where('a.companyId = :companyId', { companyId })
+        .andWhere(
+          start && end
+            ? 'COALESCE(a.sentAt, a.createdAt) >= :start AND COALESCE(a.sentAt, a.createdAt) < :end'
+            : '1=1',
+          start && end ? { start, end } : {},
+        )
+        .groupBy('a.category')
+        .getRawMany<{ category: string; count: string }>(),
+      postQb.getCount(),
+      this.posts
+        .createQueryBuilder('p')
+        .select('p.postType', 'postType')
+        .addSelect('COUNT(*)', 'count')
+        .where('p.companyId = :companyId', { companyId })
+        .andWhere(
+          start && end
+            ? 'COALESCE(p.postedAt, p.createdAt) >= :start AND COALESCE(p.postedAt, p.createdAt) < :end'
+            : '1=1',
+          start && end ? { start, end } : {},
+        )
+        .groupBy('p.postType')
+        .getRawMany<{ postType: string; count: string }>(),
+    ]);
+
+    const byBroadcastStatus: Record<string, number> = {};
+    for (const r of statusRows) {
+      byBroadcastStatus[r.status || 'unknown'] = Number(r.count) || 0;
+    }
+    const byCategory: Record<string, number> = {};
+    for (const r of categoryRows) {
+      byCategory[r.category || 'unknown'] = Number(r.count) || 0;
+    }
+    const postsByType: Record<string, number> = {};
+    for (const r of postTypeRows) {
+      postsByType[r.postType || 'unknown'] = Number(r.count) || 0;
+    }
+
+    let monthlyBreakdown: Array<{
+      month: string;
+      dispatches: number;
+      messages: number;
+      quantitySum: number;
+    }> = [];
+
+    if (!monthKey) {
+      const monthly = await this.scheduled
+        .createQueryBuilder('s')
+        .select(`to_char(date_trunc('month', COALESCE(s.sent_at, s.scheduled_at, s.created_at)), 'YYYY-MM')`, 'month')
+        .addSelect('COUNT(*)', 'dispatches')
+        .addSelect('COALESCE(SUM(s.broadcast_total), 0)', 'quantitySum')
+        .where('s.company_id = :companyId', { companyId })
+        .groupBy(`date_trunc('month', COALESCE(s.sent_at, s.scheduled_at, s.created_at))`)
+        .orderBy(`date_trunc('month', COALESCE(s.sent_at, s.scheduled_at, s.created_at))`, 'DESC')
+        .limit(24)
+        .getRawMany<{
+          month: string;
+          dispatches: string;
+          quantitySum: string;
+        }>();
+
+      const monthlyMsg = await this.audits
+        .createQueryBuilder('a')
+        .select(`to_char(date_trunc('month', COALESCE(a.sent_at, a.created_at)), 'YYYY-MM')`, 'month')
+        .addSelect('COUNT(*)', 'messages')
+        .where('a.company_id = :companyId', { companyId })
+        .groupBy(`date_trunc('month', COALESCE(a.sent_at, a.created_at))`)
+        .getRawMany<{ month: string; messages: string }>();
+
+      const msgMap = new Map(
+        monthlyMsg.map((m) => [m.month, Number(m.messages) || 0]),
+      );
+      monthlyBreakdown = monthly.map((m) => ({
+        month: m.month,
+        dispatches: Number(m.dispatches) || 0,
+        messages: msgMap.get(m.month) || 0,
+        quantitySum: Number(m.quantitySum) || 0,
+      }));
+    }
+
+    const inProgress = Object.entries(byBroadcastStatus)
+      .filter(([k]) => IN_PROGRESS.has(k))
+      .reduce((s, [, n]) => s + n, 0);
+
+    return {
+      companyId: company.id,
+      companyName: company.name,
+      scope,
+      month: monthKey,
+      whatsapp: {
+        dispatches,
+        messages,
+        quantitySum: Number(quantityRow?.quantitySum || 0),
+        acceptedSum: Number(quantityRow?.acceptedSum || 0),
+        failedSum: Number(quantityRow?.failedSum || 0),
+        deliveredSum: Number(quantityRow?.deliveredSum || 0),
+        pendingSum: Number(quantityRow?.pendingSum || 0),
+        inProgressDispatches: inProgress,
+        byCategory,
+        byBroadcastStatus,
+      },
+      posts: {
+        total: postsTotal,
+        byType: postsByType,
+      },
+      monthlyBreakdown,
     };
   }
 
