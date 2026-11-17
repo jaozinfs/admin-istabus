@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import PlanEditor from '../components/PlanEditor';
 import QuotaCards from '../components/QuotaCards';
+import StripeMetaBadge from '../components/StripeMetaBadge';
 import Toast from '../components/Toast';
 import { api } from '../lib/api';
 import type { EffectiveQuotas, PlanInfo, StoredQuotas } from '../lib/types';
@@ -25,7 +26,12 @@ type Detail = {
   plan: PlanInfo;
   quotasStored: StoredQuotas;
   quotasEffective: EffectiveQuotas;
-  stripeMetaLoaded: boolean;
+  stripeMeta: {
+    status: string;
+    ok: boolean;
+    keys: Record<string, string>;
+    waMetaFromStripe?: string | null;
+  };
 };
 
 export default function UserDetailPage() {
@@ -90,6 +96,7 @@ export default function UserDetailPage() {
             empresa: {data.company.name}
           </Link>
         )}
+        <StripeMetaBadge meta={data.stripeMeta} />
       </div>
 
       <div className="detail-grid">
@@ -97,7 +104,10 @@ export default function UserDetailPage() {
           <div className="panel">
             <strong>Cotas efetivas</strong>
             <p className="hint">
-              Meta Stripe carregado: {data.stripeMetaLoaded ? 'sim' : 'não'}
+              Status Stripe: {data.stripeMeta?.status || '—'}
+              {data.stripeMeta?.waMetaFromStripe
+                ? ` · WA Meta no produto = ${data.stripeMeta.waMetaFromStripe}`
+                : ''}
             </p>
             <div style={{ marginTop: '0.85rem' }}>
               <QuotaCards effective={data.quotasEffective} />

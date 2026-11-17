@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import PlanEditor from '../components/PlanEditor';
 import QuotaCards from '../components/QuotaCards';
+import StripeMetaBadge from '../components/StripeMetaBadge';
 import Toast from '../components/Toast';
 import { api } from '../lib/api';
 import type { EffectiveQuotas, PlanInfo, StoredQuotas } from '../lib/types';
@@ -13,7 +14,12 @@ type Detail = {
   plan: PlanInfo;
   quotasStored: StoredQuotas;
   quotasEffective: EffectiveQuotas;
-  stripeMetaLoaded: boolean;
+  stripeMeta: {
+    status: string;
+    ok: boolean;
+    keys: Record<string, string>;
+    waMetaFromStripe?: string | null;
+  };
   members: Array<{
     id: string;
     email: string;
@@ -75,9 +81,7 @@ export default function CompanyDetailPage() {
         <span className="badge">
           status: {data.plan.stripeSubscriptionStatus || 'null'}
         </span>
-        <span className="badge">
-          meta Stripe: {data.stripeMetaLoaded ? 'carregado' : 'não disponível'}
-        </span>
+        <StripeMetaBadge meta={data.stripeMeta} />
       </div>
 
       <div className="detail-grid">
@@ -85,9 +89,19 @@ export default function CompanyDetailPage() {
           <div className="panel">
             <strong>Cotas efetivas (como o InstaBuss enxerga)</strong>
             <p className="hint">
-              null no banco cai em metadata do produto Stripe (se{' '}
-              <span className="mono">STRIPE_SECRET_KEY</span>) ou free.
+              null no banco → metadata Stripe do produto → free. Produto
+              atual tem <span className="mono">cota_whatsapp_disparo_meta</span> no
+              Stripe test.
             </p>
+            {data.stripeMeta?.status === 'missing_key' && (
+              <p className="error">
+                Falta <span className="mono">STRIPE_SECRET_KEY</span> (sk_test…) na
+                Vercel — sem isso a Meta efetiva fica no free.
+              </p>
+            )}
+            {data.stripeMeta?.status === 'timeout' && (
+              <p className="error">Timeout ao falar com a Stripe (4s). Tente de novo.</p>
+            )}
             <div style={{ marginTop: '0.85rem' }}>
               <QuotaCards effective={data.quotasEffective} />
             </div>

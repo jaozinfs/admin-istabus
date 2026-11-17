@@ -29,14 +29,27 @@ export class AccountsService {
   ) {
     const raw = mapQuotas(billing);
     const active = isActiveStatus(billing.stripeSubscriptionStatus);
-    const stripeMeta = active
+    const stripe = active
       ? await this.stripeMeta.getProductMetadata(billing.stripeProductId)
-      : null;
+      : {
+          ok: false,
+          status: 'no_product' as const,
+          meta: {} as Record<string, string>,
+        };
     return {
       raw,
-      effective: resolveEffectiveQuotas(raw, { active, stripeMeta }),
+      effective: resolveEffectiveQuotas(raw, {
+        active,
+        stripeMeta:
+          Object.keys(stripe.meta).length > 0 ? stripe.meta : null,
+      }),
       planActive: active,
-      stripeMetaLoaded: !!stripeMeta,
+      stripeMeta: {
+        status: active ? stripe.status : 'skipped_inactive',
+        ok: stripe.ok,
+        keys: stripe.meta,
+        waMetaFromStripe: stripe.meta.cota_whatsapp_disparo_meta ?? null,
+      },
     };
   }
 
@@ -78,7 +91,7 @@ export class AccountsService {
           },
           quotasStored: quotas.raw,
           quotasEffective: quotas.effective,
-          stripeMetaLoaded: quotas.stripeMetaLoaded,
+          stripeMeta: quotas.stripeMeta,
         };
       }),
     );
@@ -111,7 +124,7 @@ export class AccountsService {
           },
           quotasStored: quotas.raw,
           quotasEffective: quotas.effective,
-          stripeMetaLoaded: quotas.stripeMetaLoaded,
+          stripeMeta: quotas.stripeMeta,
           members: (c.users || []).map((u) => ({
             id: u.id,
             email: u.email,
@@ -169,7 +182,7 @@ export class AccountsService {
       },
       quotasStored: quotas.raw,
       quotasEffective: quotas.effective,
-      stripeMetaLoaded: quotas.stripeMetaLoaded,
+      stripeMeta: quotas.stripeMeta,
     };
   }
 
@@ -194,7 +207,7 @@ export class AccountsService {
       },
       quotasStored: quotas.raw as QuotaBlock,
       quotasEffective: quotas.effective,
-      stripeMetaLoaded: quotas.stripeMetaLoaded,
+      stripeMeta: quotas.stripeMeta,
       members: (c.users || []).map((u) => ({
         id: u.id,
         email: u.email,
