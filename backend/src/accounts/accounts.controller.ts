@@ -1,10 +1,23 @@
-import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Query,
+  Req,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { AuthService } from '../auth/auth.service';
 import { AccountsService } from './accounts.service';
 import { UpdatePlanDto } from './dto/update-plan.dto';
 
 @Controller('accounts')
 export class AccountsController {
-  constructor(private readonly accounts: AccountsService) {}
+  constructor(
+    private readonly accounts: AccountsService,
+    private readonly auth: AuthService,
+  ) {}
 
   @Get('stats')
   stats() {
@@ -37,7 +50,13 @@ export class AccountsController {
   }
 
   @Patch('plan')
-  updatePlan(@Body() dto: UpdatePlanDto) {
+  async updatePlan(
+    @Body() dto: UpdatePlanDto,
+    @Req() req: { user?: { operatorId?: string } },
+  ) {
+    const operatorId = req.user?.operatorId;
+    if (!operatorId) throw new UnauthorizedException();
+    await this.auth.assertOperatorPassword(operatorId, dto.confirmPassword);
     return this.accounts.updatePlan(dto);
   }
 }

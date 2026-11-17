@@ -17,6 +17,61 @@ export type QuotaBlock = {
   periodEnd: string | null;
 };
 
+export type EffectiveQuotaBlock = {
+  feedLimit: number;
+  feedUsed: number;
+  storyLimit: number;
+  storyUsed: number;
+  geniaLimit: number;
+  geniaUsed: number;
+  genVideoLimit: number;
+  genVideoUsed: number;
+  whatsappGroupBaileysLimit: number;
+  whatsappBroadcastBaileysLimit: number;
+  whatsappBroadcastMetaLimit: number;
+  instagramAccountsLimit: number;
+  tiktokAccountsLimit: number;
+  linkedinAccountsLimit: number;
+  youtubeChannelsLimit: number;
+  periodEnd: string | null;
+  sources: Record<string, 'stored' | 'stripe' | 'free'>;
+};
+
+export type FreeDefaults = {
+  feed: number;
+  story: number;
+  genia: number;
+  genVideo: number;
+  whatsappGroupBaileys: number;
+  whatsappBroadcastBaileys: number;
+  whatsappBroadcastMeta: number;
+  instagramAccounts: number;
+  tiktokAccounts: number;
+  linkedinAccounts: number;
+  youtubeChannels: number;
+};
+
+function envInt(name: string, fallback: number): number {
+  const n = parseInt(process.env[name] || '', 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+export function freeDefaults(): FreeDefaults {
+  return {
+    feed: envInt('FREE_QUOTA_FEED', 5),
+    story: envInt('FREE_QUOTA_STORY', 5),
+    genia: envInt('FREE_QUOTA_GENIA', 3),
+    genVideo: envInt('FREE_QUOTA_GEN_VIDEO', 0),
+    whatsappGroupBaileys: envInt('FREE_QUOTA_WHATSAPP_GROUP_BAILEYS', 0),
+    whatsappBroadcastBaileys: envInt('FREE_QUOTA_WHATSAPP_BROADCAST_BAILEYS', 0),
+    whatsappBroadcastMeta: envInt('FREE_QUOTA_WHATSAPP_BROADCAST_META', 0),
+    instagramAccounts: envInt('FREE_QUOTA_INSTAGRAM_ACCOUNTS', 1),
+    tiktokAccounts: envInt('FREE_QUOTA_TIKTOK_ACCOUNTS', 1),
+    linkedinAccounts: envInt('FREE_QUOTA_LINKEDIN_ACCOUNTS', 1),
+    youtubeChannels: envInt('FREE_QUOTA_YOUTUBE_CHANNELS', 1),
+  };
+}
+
 export function mapQuotas(row: {
   quotaFeedLimit: number | null;
   quotaFeedUsed: number;
@@ -53,4 +108,140 @@ export function mapQuotas(row: {
     youtubeChannelsLimit: row.quotaYoutubeChannelsLimit,
     periodEnd: row.quotaPeriodEnd?.toISOString() ?? null,
   };
+}
+
+type StripeMeta = Record<string, string | undefined>;
+
+function pickMetaInt(meta: StripeMeta | null, key: string): number | null {
+  if (!meta) return null;
+  const raw = meta[key];
+  if (raw == null || raw === '') return null;
+  const n = parseInt(String(raw), 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function resolveOne(
+  stored: number | null | undefined,
+  stripeVal: number | null,
+  freeVal: number,
+  active: boolean,
+): { value: number; source: 'stored' | 'stripe' | 'free' } {
+  if (stored != null) return { value: stored, source: 'stored' };
+  if (active && stripeVal != null) return { value: stripeVal, source: 'stripe' };
+  return { value: freeVal, source: 'free' };
+}
+
+export function resolveEffectiveQuotas(
+  raw: QuotaBlock,
+  opts: {
+    active: boolean;
+    stripeMeta?: StripeMeta | null;
+  },
+): EffectiveQuotaBlock {
+  const free = freeDefaults();
+  const meta = opts.stripeMeta ?? null;
+  const active = opts.active;
+
+  const feed = resolveOne(
+    raw.feedLimit,
+    pickMetaInt(meta, 'cota_feed'),
+    free.feed,
+    active,
+  );
+  const story = resolveOne(
+    raw.storyLimit,
+    pickMetaInt(meta, 'cota_story'),
+    free.story,
+    active,
+  );
+  const genia = resolveOne(
+    raw.geniaLimit,
+    pickMetaInt(meta, 'cota_genia'),
+    free.genia,
+    active,
+  );
+  const genVideo = resolveOne(
+    raw.genVideoLimit,
+    pickMetaInt(meta, 'cota_gen_video'),
+    free.genVideo,
+    active,
+  );
+  const waGroup = resolveOne(
+    raw.whatsappGroupBaileysLimit,
+    pickMetaInt(meta, 'cota_whatsapp_grupo_baileys'),
+    free.whatsappGroupBaileys,
+    active,
+  );
+  const waBaileys = resolveOne(
+    raw.whatsappBroadcastBaileysLimit,
+    pickMetaInt(meta, 'cota_whatsapp_disparo_baileys'),
+    free.whatsappBroadcastBaileys,
+    active,
+  );
+  const waMeta = resolveOne(
+    raw.whatsappBroadcastMetaLimit,
+    pickMetaInt(meta, 'cota_whatsapp_disparo_meta'),
+    free.whatsappBroadcastMeta,
+    active,
+  );
+  const ig = resolveOne(
+    raw.instagramAccountsLimit,
+    pickMetaInt(meta, 'cota_instagram'),
+    free.instagramAccounts,
+    active,
+  );
+  const tk = resolveOne(
+    raw.tiktokAccountsLimit,
+    pickMetaInt(meta, 'cota_tiktok'),
+    free.tiktokAccounts,
+    active,
+  );
+  const li = resolveOne(
+    raw.linkedinAccountsLimit,
+    pickMetaInt(meta, 'cota_linkedin'),
+    free.linkedinAccounts,
+    active,
+  );
+  const yt = resolveOne(
+    raw.youtubeChannelsLimit,
+    pickMetaInt(meta, 'cota_youtube'),
+    free.youtubeChannels,
+    active,
+  );
+
+  return {
+    feedLimit: feed.value,
+    feedUsed: raw.feedUsed,
+    storyLimit: story.value,
+    storyUsed: raw.storyUsed,
+    geniaLimit: genia.value,
+    geniaUsed: raw.geniaUsed,
+    genVideoLimit: genVideo.value,
+    genVideoUsed: raw.genVideoUsed,
+    whatsappGroupBaileysLimit: waGroup.value,
+    whatsappBroadcastBaileysLimit: waBaileys.value,
+    whatsappBroadcastMetaLimit: waMeta.value,
+    instagramAccountsLimit: ig.value,
+    tiktokAccountsLimit: tk.value,
+    linkedinAccountsLimit: li.value,
+    youtubeChannelsLimit: yt.value,
+    periodEnd: raw.periodEnd,
+    sources: {
+      feed: feed.source,
+      story: story.source,
+      genia: genia.source,
+      genVideo: genVideo.source,
+      whatsappGroupBaileys: waGroup.source,
+      whatsappBroadcastBaileys: waBaileys.source,
+      whatsappBroadcastMeta: waMeta.source,
+      instagram: ig.source,
+      tiktok: tk.source,
+      linkedin: li.source,
+      youtube: yt.source,
+    },
+  };
+}
+
+export function isActiveStatus(status: string | null | undefined): boolean {
+  return status === 'active' || status === 'trialing';
 }

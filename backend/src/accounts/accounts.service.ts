@@ -4,7 +4,13 @@ import { IsNull, Not, Repository } from 'typeorm';
 import { IbCompany } from '../entities/ib-company.entity';
 import { IbUser } from '../entities/ib-user.entity';
 import { UpdatePlanDto } from './dto/update-plan.dto';
-import { mapQuotas } from './quota.util';
+import {
+  isActiveStatus,
+  mapQuotas,
+  resolveEffectiveQuotas,
+  type QuotaBlock,
+} from './quota.util';
+import { StripeMetaService } from './stripe-meta.service';
 
 @Injectable()
 export class AccountsService {
@@ -12,7 +18,27 @@ export class AccountsService {
     @InjectRepository(IbUser) private readonly users: Repository<IbUser>,
     @InjectRepository(IbCompany)
     private readonly companiesRepo: Repository<IbCompany>,
+    private readonly stripeMeta: StripeMetaService,
   ) {}
+
+  private async withEffective(
+    billing: {
+      stripeProductId: string | null;
+      stripeSubscriptionStatus: string | null;
+    } & Parameters<typeof mapQuotas>[0],
+  ) {
+    const raw = mapQuotas(billing);
+    const active = isActiveStatus(billing.stripeSubscriptionStatus);
+    const stripeMeta = active
+      ? await this.stripeMeta.getProductMetadata(billing.stripeProductId)
+      : null;
+    return {
+      raw,
+      effective: resolveEffectiveQuotas(raw, { active, stripeMeta }),
+      planActive: active,
+      stripeMetaLoaded: !!stripeMeta,
+    };
+  }
 
   async overview(q?: string) {
     const qb = this.users
@@ -27,29 +53,35 @@ export class AccountsService {
       );
     }
     const rows = await qb.getMany();
-    return rows.map((u) => {
-      const billing = u.company ?? u;
-      return {
-        userId: u.id,
-        email: u.email,
-        name: u.name,
-        status: u.status,
-        role: u.role,
-        accountType: u.accountType,
-        createdAt: u.createdAt,
-        company: u.company
-          ? { id: u.company.id, name: u.company.name }
-          : null,
-        plan: {
-          stripeProductId: billing.stripeProductId,
-          stripeSubscriptionStatus: billing.stripeSubscriptionStatus,
-          stripePriceId: billing.stripePriceId,
-          stripeSubscriptionId: billing.stripeSubscriptionId,
-          scope: u.company ? 'company' : 'user',
-        },
-        quotas: mapQuotas(billing),
-      };
-    });
+    return Promise.all(
+      rows.map(async (u) => {
+        const billing = u.company ?? u;
+        const quotas = await this.withEffective(billing);
+        return {
+          userId: u.id,
+          email: u.email,
+          name: u.name,
+          status: u.status,
+          role: u.role,
+          accountType: u.accountType,
+          createdAt: u.createdAt,
+          company: u.company
+            ? { id: u.company.id, name: u.company.name }
+            : null,
+          plan: {
+            stripeProductId: billing.stripeProductId,
+            stripeSubscriptionStatus: billing.stripeSubscriptionStatus,
+            stripePriceId: billing.stripePriceId,
+            stripeSubscriptionId: billing.stripeSubscriptionId,
+            scope: u.company ? 'company' : 'user',
+            active: quotas.planActive,
+          },
+          quotasStored: quotas.raw,
+          quotasEffective: quotas.effective,
+          stripeMetaLoaded: quotas.stripeMetaLoaded,
+        };
+      }),
+    );
   }
 
   async listCompanies(q?: string) {
@@ -62,28 +94,36 @@ export class AccountsService {
       qb.andWhere('c.name ILIKE :q', { q: `%${q.trim()}%` });
     }
     const rows = await qb.getMany();
-    return rows.map((c) => ({
-      id: c.id,
-      name: c.name,
-      createdAt: c.createdAt,
-      plan: {
-        stripeProductId: c.stripeProductId,
-        stripeSubscriptionStatus: c.stripeSubscriptionStatus,
-        stripePriceId: c.stripePriceId,
-        stripeSubscriptionId: c.stripeSubscriptionId,
-        stripeCustomerId: c.stripeCustomerId,
-      },
-      quotas: mapQuotas(c),
-      members: (c.users || []).map((u) => ({
-        id: u.id,
-        email: u.email,
-        name: u.name,
-        role: u.role,
-        status: u.status,
-        accountType: u.accountType,
-        createdAt: u.createdAt,
-      })),
-    }));
+    return Promise.all(
+      rows.map(async (c) => {
+        const quotas = await this.withEffective(c);
+        return {
+          id: c.id,
+          name: c.name,
+          createdAt: c.createdAt,
+          plan: {
+            stripeProductId: c.stripeProductId,
+            stripeSubscriptionStatus: c.stripeSubscriptionStatus,
+            stripePriceId: c.stripePriceId,
+            stripeSubscriptionId: c.stripeSubscriptionId,
+            stripeCustomerId: c.stripeCustomerId,
+            active: quotas.planActive,
+          },
+          quotasStored: quotas.raw,
+          quotasEffective: quotas.effective,
+          stripeMetaLoaded: quotas.stripeMetaLoaded,
+          members: (c.users || []).map((u) => ({
+            id: u.id,
+            email: u.email,
+            name: u.name,
+            role: u.role,
+            status: u.status,
+            accountType: u.accountType,
+            createdAt: u.createdAt,
+          })),
+        };
+      }),
+    );
   }
 
   async userDetail(userId: string) {
@@ -93,6 +133,7 @@ export class AccountsService {
     });
     if (!u) throw new NotFoundException('Usuário não encontrado');
     const billing = u.company ?? u;
+    const quotas = await this.withEffective(billing);
     return {
       user: {
         id: u.id,
@@ -102,25 +143,12 @@ export class AccountsService {
         role: u.role,
         accountType: u.accountType,
         createdAt: u.createdAt,
-        personalPlan: {
-          stripeProductId: u.stripeProductId,
-          stripeSubscriptionStatus: u.stripeSubscriptionStatus,
-        },
-        personalQuotas: mapQuotas(u),
       },
       company: u.company
         ? {
             id: u.company.id,
             name: u.company.name,
             createdAt: u.company.createdAt,
-            plan: {
-              stripeProductId: u.company.stripeProductId,
-              stripeSubscriptionStatus: u.company.stripeSubscriptionStatus,
-              stripePriceId: u.company.stripePriceId,
-              stripeSubscriptionId: u.company.stripeSubscriptionId,
-              stripeCustomerId: u.company.stripeCustomerId,
-            },
-            quotas: mapQuotas(u.company),
             members: (u.company.users || []).map((m) => ({
               id: m.id,
               email: m.email,
@@ -130,14 +158,18 @@ export class AccountsService {
             })),
           }
         : null,
-      effectiveBillingScope: u.company ? 'company' : 'user',
-      effectivePlan: {
+      effectiveBillingScope: u.company ? ('company' as const) : ('user' as const),
+      plan: {
         stripeProductId: billing.stripeProductId,
         stripeSubscriptionStatus: billing.stripeSubscriptionStatus,
         stripePriceId: billing.stripePriceId,
         stripeSubscriptionId: billing.stripeSubscriptionId,
+        stripeCustomerId: billing.stripeCustomerId,
+        active: quotas.planActive,
       },
-      effectiveQuotas: mapQuotas(billing),
+      quotasStored: quotas.raw,
+      quotasEffective: quotas.effective,
+      stripeMetaLoaded: quotas.stripeMetaLoaded,
     };
   }
 
@@ -147,6 +179,7 @@ export class AccountsService {
       relations: ['users'],
     });
     if (!c) throw new NotFoundException('Empresa não encontrada');
+    const quotas = await this.withEffective(c);
     return {
       id: c.id,
       name: c.name,
@@ -157,8 +190,11 @@ export class AccountsService {
         stripePriceId: c.stripePriceId,
         stripeSubscriptionId: c.stripeSubscriptionId,
         stripeCustomerId: c.stripeCustomerId,
+        active: quotas.planActive,
       },
-      quotas: mapQuotas(c),
+      quotasStored: quotas.raw as QuotaBlock,
+      quotasEffective: quotas.effective,
+      stripeMetaLoaded: quotas.stripeMetaLoaded,
       members: (c.users || []).map((u) => ({
         id: u.id,
         email: u.email,
@@ -186,10 +222,33 @@ export class AccountsService {
       'quotaGeniaLimit',
     ];
     for (const k of keys) {
+      if (k === 'confirmPassword') continue;
       if (dto[k] !== undefined) patch[k] = dto[k];
     }
-    if (dto.stripeSubscriptionStatus === 'active' && !patch.stripeSubscriptionId) {
-      patch.stripeSubscriptionId = 'sub_admin_manual';
+    if (
+      dto.stripeSubscriptionStatus === 'active' &&
+      patch.stripeSubscriptionId === undefined
+    ) {
+      // keep existing unless explicitly cleared; only set manual if missing later
+    }
+    if (dto.stripeSubscriptionStatus === 'active') {
+      if (dto.scope === 'company') {
+        const cur = await this.companiesRepo.findOne({
+          where: { id: dto.id },
+          select: ['id', 'stripeSubscriptionId'],
+        });
+        if (cur && !cur.stripeSubscriptionId && dto.stripeSubscriptionId === undefined) {
+          patch.stripeSubscriptionId = 'sub_admin_manual';
+        }
+      } else {
+        const cur = await this.users.findOne({
+          where: { id: dto.id },
+          select: ['id', 'stripeSubscriptionId'],
+        });
+        if (cur && !cur.stripeSubscriptionId && dto.stripeSubscriptionId === undefined) {
+          patch.stripeSubscriptionId = 'sub_admin_manual';
+        }
+      }
     }
 
     if (dto.scope === 'company') {
@@ -224,6 +283,9 @@ export class AccountsService {
       activePaidCompanies: paidCompanies,
       activePaidPersonalUsers: paidUsers,
       activePaidTotal: paidCompanies + paidUsers,
+      freeDefaultsHint: {
+        note: 'null no banco = free ou metadata Stripe (se STRIPE_SECRET_KEY)',
+      },
     };
   }
 

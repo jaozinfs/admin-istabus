@@ -89,4 +89,12 @@ export class AuthService implements OnModuleInit {
       expiresIn: this.config.get<string>('JWT_EXPIRES_IN') || '12h',
     };
   }
+
+  async assertOperatorPassword(operatorId: string, password: string) {
+    const op = await this.operators.findOne({ where: { id: operatorId } });
+    if (!op) throw new UnauthorizedException('Operador inválido');
+    const ok = await bcrypt.compare(password, op.passwordHash);
+    if (!ok) throw new UnauthorizedException('Senha do admin incorreta');
+    return op;
+  }
 }

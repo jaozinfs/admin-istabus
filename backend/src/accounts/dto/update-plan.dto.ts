@@ -1,5 +1,13 @@
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+  MinLength,
+} from 'class-validator';
 
 export class UpdatePlanDto {
   @IsIn(['user', 'company'])
@@ -7,6 +15,10 @@ export class UpdatePlanDto {
 
   @IsUUID()
   id: string;
+
+  @IsString()
+  @MinLength(8)
+  confirmPassword: string;
 
   @IsOptional()
   @IsString()

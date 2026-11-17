@@ -14,8 +14,13 @@ type Top = {
   day: string;
   top: Array<{
     companyId: string | null;
+    companyName: string | null;
     userId: string;
+    userEmail: string | null;
+    userName: string | null;
     total: number;
+    metaUsed: number;
+    metaLimit: number | null;
     byCategory: Record<string, number>;
   }>;
 };
@@ -39,7 +44,8 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Dashboard</h2>
+      <h1 className="page-title">Dashboard</h1>
+      <p className="page-sub">Visão geral das contas InstaBuss e uso de hoje</p>
       {error && <p className="error">{error}</p>}
       <div className="grid-stats">
         <div className="panel stat">
@@ -65,13 +71,13 @@ export default function DashboardPage() {
       <div className="panel">
         <div className="toolbar">
           <strong>Top uso WhatsApp — {top?.day || 'hoje'}</strong>
-          <Link to="/usage">ver diário</Link>
+          <Link to="/usage">abrir diário</Link>
         </div>
         <table>
           <thead>
             <tr>
-              <th>User</th>
-              <th>Company</th>
+              <th>Usuário</th>
+              <th>Empresa</th>
               <th>Total</th>
               <th>Meta</th>
               <th>Baileys BC</th>
@@ -80,20 +86,26 @@ export default function DashboardPage() {
           <tbody>
             {(top?.top || []).map((row) => (
               <tr key={`${row.companyId}-${row.userId}`}>
-                <td className="mono">
-                  <Link to={`/accounts/${row.userId}`}>{row.userId.slice(0, 8)}</Link>
+                <td>
+                  <Link to={`/accounts/${row.userId}`}>
+                    {row.userEmail || row.userId.slice(0, 8)}
+                  </Link>
+                  <div className="muted">{row.userName || '—'}</div>
                 </td>
-                <td className="mono">
+                <td>
                   {row.companyId ? (
                     <Link to={`/companies/${row.companyId}`}>
-                      {row.companyId.slice(0, 8)}
+                      {row.companyName || row.companyId.slice(0, 8)}
                     </Link>
                   ) : (
                     '—'
                   )}
                 </td>
                 <td className="mono">{row.total}</td>
-                <td className="mono">{row.byCategory.meta_broadcast || 0}</td>
+                <td className="mono">
+                  {row.metaUsed}
+                  {row.metaLimit != null ? ` / ${row.metaLimit}` : ''}
+                </td>
                 <td className="mono">{row.byCategory.baileys_broadcast || 0}</td>
               </tr>
             ))}

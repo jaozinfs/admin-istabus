@@ -1,6 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
+import { StripeMetaService } from '../accounts/stripe-meta.service';
+import {
+  isActiveStatus,
+  mapQuotas,
+  resolveEffectiveQuotas,
+} from '../accounts/quota.util';
+import { IbCompany } from '../entities/ib-company.entity';
+import { IbUser } from '../entities/ib-user.entity';
 import { IbWhatsappAudit } from '../entities/ib-whatsapp-audit.entity';
 
 @Injectable()
@@ -8,6 +16,10 @@ export class UsageService {
   constructor(
     @InjectRepository(IbWhatsappAudit)
     private readonly audits: Repository<IbWhatsappAudit>,
+    @InjectRepository(IbUser) private readonly users: Repository<IbUser>,
+    @InjectRepository(IbCompany)
+    private readonly companies: Repository<IbCompany>,
+    private readonly stripeMeta: StripeMetaService,
   ) {}
 
   private dayRange(date?: string) {
@@ -94,7 +106,67 @@ export class UsageService {
       byAccount.set(key, cur);
     }
 
-    const accounts = [...byAccount.values()].sort((a, b) => b.total - a.total);
+    const baseAccounts = [...byAccount.values()].sort(
+      (a, b) => b.total - a.total,
+    );
+    const userIds = [...new Set(baseAccounts.map((a) => a.userId))];
+    const companyIds = [
+      ...new Set(
+        baseAccounts.map((a) => a.companyId).filter((x): x is string => !!x),
+      ),
+    ];
+
+    const [users, companies] = await Promise.all([
+      userIds.length
+        ? this.users.find({ where: { id: In(userIds) } })
+        : Promise.resolve([] as IbUser[]),
+      companyIds.length
+        ? this.companies.find({ where: { id: In(companyIds) } })
+        : Promise.resolve([] as IbCompany[]),
+    ]);
+    const userMap = new Map(users.map((u) => [u.id, u]));
+    const companyMap = new Map(companies.map((c) => [c.id, c]));
+
+    const accounts = await Promise.all(
+      baseAccounts.map(async (row) => {
+        const user = userMap.get(row.userId);
+        const company = row.companyId ? companyMap.get(row.companyId) : null;
+        const billing = company ?? user ?? null;
+        let quotasEffective = null as ReturnType<
+          typeof resolveEffectiveQuotas
+        > | null;
+        let planActive = false;
+        if (billing) {
+          const raw = mapQuotas(billing);
+          planActive = isActiveStatus(billing.stripeSubscriptionStatus);
+          const stripeMeta = planActive
+            ? await this.stripeMeta.getProductMetadata(billing.stripeProductId)
+            : null;
+          quotasEffective = resolveEffectiveQuotas(raw, {
+            active: planActive,
+            stripeMeta,
+          });
+        }
+        const metaUsed = row.byCategory.meta_broadcast || 0;
+        const metaLimit = quotasEffective?.whatsappBroadcastMetaLimit ?? null;
+        return {
+          ...row,
+          userName: user?.name || null,
+          userEmail: user?.email || null,
+          companyName: company?.name || null,
+          planActive,
+          stripeProductId: billing?.stripeProductId ?? null,
+          quotasEffective,
+          metaUsed,
+          metaLimit,
+          metaPct:
+            metaLimit && metaLimit > 0
+              ? Math.round((metaUsed / metaLimit) * 100)
+              : null,
+        };
+      }),
+    );
+
     return {
       day,
       totalMessages: accounts.reduce((s, a) => s + a.total, 0),

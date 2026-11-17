@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import PlanEditor from '../components/PlanEditor';
+import QuotaCards from '../components/QuotaCards';
+import Toast from '../components/Toast';
 import { api } from '../lib/api';
+import type { EffectiveQuotas, PlanInfo, StoredQuotas } from '../lib/types';
 
 type Detail = {
   user: {
@@ -16,27 +19,22 @@ type Detail = {
   company: {
     id: string;
     name: string;
-    plan: {
-      stripeProductId: string | null;
-      stripeSubscriptionStatus: string | null;
-      stripePriceId: string | null;
-    };
-    quotas: Record<string, number | string | null>;
-    members: Array<{ id: string; email: string; role: string }>;
+    members: Array<{ id: string; email: string; role: string; status: string }>;
   } | null;
   effectiveBillingScope: 'user' | 'company';
-  effectivePlan: {
-    stripeProductId: string | null;
-    stripeSubscriptionStatus: string | null;
-    stripePriceId: string | null;
-  };
-  effectiveQuotas: Record<string, number | string | null>;
+  plan: PlanInfo;
+  quotasStored: StoredQuotas;
+  quotasEffective: EffectiveQuotas;
+  stripeMetaLoaded: boolean;
 };
 
 export default function UserDetailPage() {
   const { id } = useParams();
   const [data, setData] = useState<Detail | null>(null);
   const [error, setError] = useState('');
+  const [toast, setToast] = useState<{ msg: string; kind?: 'ok' | 'error' } | null>(
+    null,
+  );
 
   async function load() {
     if (!id) return;
@@ -54,60 +52,81 @@ export default function UserDetailPage() {
 
   if (!data) return <p className="muted">{error || 'carregando…'}</p>;
 
-  const scope = data.effectiveBillingScope;
-  const targetId = scope === 'company' && data.company ? data.company.id : data.user.id;
+  const targetId =
+    data.effectiveBillingScope === 'company' && data.company
+      ? data.company.id
+      : data.user.id;
 
   return (
     <div>
+      {toast && (
+        <Toast
+          message={toast.msg}
+          kind={toast.kind}
+          onClose={() => setToast(null)}
+        />
+      )}
       <p className="muted">
         <Link to="/accounts">← contas</Link>
       </p>
-      <h2 style={{ marginTop: 0 }}>{data.user.email}</h2>
-      <p className="muted">
-        {data.user.name || '—'} · {data.user.status} · {data.user.accountType} ·{' '}
-        {data.user.role}
+      <h1 className="page-title">{data.user.email}</h1>
+      <p className="page-sub">
+        {data.user.name || 'sem nome'} · {data.user.accountType} · {data.user.role} ·{' '}
+        {data.user.status}
       </p>
 
+      <div className="toolbar">
+        <span className={`badge ${data.plan.active ? 'ok' : 'warn'}`}>
+          billing: {data.effectiveBillingScope}
+        </span>
+        <span className={`badge ${data.plan.active ? 'ok' : ''}`}>
+          {data.plan.active ? 'ativo' : 'free'}
+        </span>
+        <span className="badge accent mono">
+          {data.plan.stripeProductId || 'sem product'}
+        </span>
+        {data.company && (
+          <Link className="badge" to={`/companies/${data.company.id}`}>
+            empresa: {data.company.name}
+          </Link>
+        )}
+      </div>
+
       <div className="detail-grid">
-        <div className="panel">
-          <strong>Billing efetivo ({scope})</strong>
-          <pre className="mono" style={{ whiteSpace: 'pre-wrap' }}>
-            {JSON.stringify(
-              { plan: data.effectivePlan, quotas: data.effectiveQuotas },
-              null,
-              2,
-            )}
-          </pre>
+        <div className="stack" style={{ marginTop: 0 }}>
+          <div className="panel">
+            <strong>Cotas efetivas</strong>
+            <p className="hint">
+              Meta Stripe carregado: {data.stripeMetaLoaded ? 'sim' : 'não'}
+            </p>
+            <div style={{ marginTop: '0.85rem' }}>
+              <QuotaCards effective={data.quotasEffective} />
+            </div>
+          </div>
           {data.company && (
-            <>
-              <strong>Empresa / subcontas</strong>
-              <p>
-                <Link to={`/companies/${data.company.id}`}>{data.company.name}</Link>
-              </p>
-              <ul>
+            <div className="panel">
+              <strong>Subcontas da empresa</strong>
+              <ul className="member-list">
                 {data.company.members.map((m) => (
                   <li key={m.id}>
-                    <Link to={`/accounts/${m.id}`}>{m.email}</Link> · {m.role}
+                    <Link to={`/accounts/${m.id}`}>{m.email}</Link>
+                    <span className="badge">
+                      {m.role} · {m.status}
+                    </span>
                   </li>
                 ))}
               </ul>
-            </>
+            </div>
           )}
         </div>
+
         <PlanEditor
-          scope={scope}
+          scope={data.effectiveBillingScope}
           id={targetId}
-          initial={{
-            stripeProductId: data.effectivePlan.stripeProductId,
-            stripeSubscriptionStatus: data.effectivePlan.stripeSubscriptionStatus,
-            stripePriceId: data.effectivePlan.stripePriceId,
-            quotaWhatsappBroadcastMetaLimit: data.effectiveQuotas
-              .whatsappBroadcastMetaLimit as number | null,
-            quotaFeedLimit: data.effectiveQuotas.feedLimit as number | null,
-            quotaStoryLimit: data.effectiveQuotas.storyLimit as number | null,
-            quotaGeniaLimit: data.effectiveQuotas.geniaLimit as number | null,
-          }}
+          plan={data.plan}
+          stored={data.quotasStored}
           onSaved={() => void load()}
+          onToast={(msg, kind) => setToast({ msg, kind })}
         />
       </div>
     </div>

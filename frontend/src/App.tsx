@@ -16,7 +16,7 @@ function Shell({ children }: { children: ReactNode }) {
         <div className="brand">
           admin-<span>istabus</span>
         </div>
-        <div className="muted" style={{ fontSize: '0.8rem' }}>
+        <div className="muted" style={{ fontSize: '0.82rem', fontWeight: 600 }}>
           {getUsername() || 'operador'}
         </div>
         <nav className="nav">

@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
+import type { EffectiveQuotas, PlanInfo } from '../lib/types';
 
 type Row = {
   userId: string;
@@ -8,24 +9,19 @@ type Row = {
   name: string | null;
   status: string;
   company: { id: string; name: string } | null;
-  plan: {
-    stripeProductId: string | null;
-    stripeSubscriptionStatus: string | null;
-    scope: string;
-  };
-  quotas: {
-    whatsappBroadcastMetaLimit: number | null;
-    feedUsed: number;
-    geniaUsed: number;
-  };
+  plan: PlanInfo;
+  quotasEffective: EffectiveQuotas;
 };
 
 export default function AccountsPage() {
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const nav = useNavigate();
 
   async function load(query = q) {
+    setLoading(true);
     try {
       const data = await api<Row[]>(
         `/accounts${query ? `?q=${encodeURIComponent(query)}` : ''}`,
@@ -34,6 +30,8 @@ export default function AccountsPage() {
       setError('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro');
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -48,7 +46,8 @@ export default function AccountsPage() {
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Contas</h2>
+      <h1 className="page-title">Contas</h1>
+      <p className="page-sub">Usuários InstaBuss com plano efetivo e cotas</p>
       <form className="toolbar" onSubmit={onSearch}>
         <input
           style={{ flex: 1 }}
@@ -56,50 +55,58 @@ export default function AccountsPage() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        <button type="submit">Buscar</button>
+        <button type="submit" disabled={loading}>
+          {loading ? 'Buscando…' : 'Buscar'}
+        </button>
       </form>
       {error && <p className="error">{error}</p>}
       <div className="panel">
         <table>
           <thead>
             <tr>
-              <th>Email</th>
+              <th>Conta</th>
               <th>Empresa</th>
-              <th>Status plano</th>
-              <th>Product</th>
-              <th>WA Meta lim</th>
-              <th></th>
+              <th>Plano</th>
+              <th>WA Meta</th>
+              <th>Feed</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.userId}>
+              <tr
+                key={r.userId}
+                className="row-click"
+                onClick={() => nav(`/accounts/${r.userId}`)}
+              >
                 <td>
-                  <div>{r.email}</div>
+                  <Link to={`/accounts/${r.userId}`} onClick={(e) => e.stopPropagation()}>
+                    {r.email}
+                  </Link>
                   <div className="muted">{r.name || r.status}</div>
                 </td>
                 <td>
                   {r.company ? (
-                    <Link to={`/companies/${r.company.id}`}>{r.company.name}</Link>
+                    <Link
+                      to={`/companies/${r.company.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {r.company.name}
+                    </Link>
                   ) : (
                     <span className="muted">pessoal</span>
                   )}
                 </td>
                 <td>
-                  <span
-                    className={`badge ${
-                      r.plan.stripeSubscriptionStatus === 'active' ? 'ok' : ''
-                    }`}
-                  >
-                    {r.plan.stripeSubscriptionStatus || 'free'} · {r.plan.scope}
+                  <span className={`badge ${r.plan.active ? 'ok' : ''}`}>
+                    {r.plan.active ? 'ativo' : 'free'} · {r.plan.scope}
                   </span>
+                  <div className="mono muted">{r.plan.stripeProductId || '—'}</div>
                 </td>
-                <td className="mono">{r.plan.stripeProductId || '—'}</td>
                 <td className="mono">
-                  {r.quotas.whatsappBroadcastMetaLimit ?? 'null→free'}
+                  {r.quotasEffective.whatsappBroadcastMetaLimit}
                 </td>
-                <td>
-                  <Link to={`/accounts/${r.userId}`}>abrir</Link>
+                <td className="mono">
+                  {r.quotasEffective.feedUsed}/{r.quotasEffective.feedLimit}
                 </td>
               </tr>
             ))}

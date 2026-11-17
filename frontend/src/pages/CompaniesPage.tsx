@@ -1,16 +1,14 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
+import type { EffectiveQuotas, PlanInfo } from '../lib/types';
 
 type Row = {
   id: string;
   name: string;
   createdAt: string;
-  plan: {
-    stripeProductId: string | null;
-    stripeSubscriptionStatus: string | null;
-  };
-  quotas: { whatsappBroadcastMetaLimit: number | null };
+  plan: PlanInfo;
+  quotasEffective: EffectiveQuotas;
   members: Array<{ id: string; email: string }>;
 };
 
@@ -18,8 +16,11 @@ export default function CompaniesPage() {
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const nav = useNavigate();
 
   async function load(query = q) {
+    setLoading(true);
     try {
       setRows(
         await api<Row[]>(
@@ -29,6 +30,8 @@ export default function CompaniesPage() {
       setError('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro');
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -43,7 +46,8 @@ export default function CompaniesPage() {
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Empresas</h2>
+      <h1 className="page-title">Empresas</h1>
+      <p className="page-sub">Billing da empresa + membros / subcontas</p>
       <form className="toolbar" onSubmit={onSearch}>
         <input
           style={{ flex: 1 }}
@@ -51,40 +55,47 @@ export default function CompaniesPage() {
           onChange={(e) => setQ(e.target.value)}
           placeholder="buscar empresa"
         />
-        <button>Buscar</button>
+        <button disabled={loading}>{loading ? 'Buscando…' : 'Buscar'}</button>
       </form>
       {error && <p className="error">{error}</p>}
       <div className="panel">
         <table>
           <thead>
             <tr>
-              <th>Nome</th>
+              <th>Empresa</th>
               <th>Membros</th>
               <th>Plano</th>
-              <th>WA Meta</th>
-              <th></th>
+              <th>WA Meta efetivo</th>
+              <th>GenIA</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.id}>
-                <td>{r.name}</td>
+              <tr
+                key={r.id}
+                className="row-click"
+                onClick={() => nav(`/companies/${r.id}`)}
+              >
+                <td>
+                  <Link to={`/companies/${r.id}`} onClick={(e) => e.stopPropagation()}>
+                    {r.name}
+                  </Link>
+                  <div className="muted">
+                    {new Date(r.createdAt).toLocaleDateString('pt-BR')}
+                  </div>
+                </td>
                 <td className="mono">{r.members.length}</td>
                 <td>
-                  <span
-                    className={`badge ${
-                      r.plan.stripeSubscriptionStatus === 'active' ? 'ok' : ''
-                    }`}
-                  >
-                    {r.plan.stripeSubscriptionStatus || 'free'}
+                  <span className={`badge ${r.plan.active ? 'ok' : ''}`}>
+                    {r.plan.active ? 'ativo' : 'free'}
                   </span>
                   <div className="mono muted">{r.plan.stripeProductId || '—'}</div>
                 </td>
                 <td className="mono">
-                  {r.quotas.whatsappBroadcastMetaLimit ?? 'null→free'}
+                  {r.quotasEffective.whatsappBroadcastMetaLimit}
                 </td>
-                <td>
-                  <Link to={`/companies/${r.id}`}>abrir</Link>
+                <td className="mono">
+                  {r.quotasEffective.geniaUsed}/{r.quotasEffective.geniaLimit}
                 </td>
               </tr>
             ))}
