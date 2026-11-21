@@ -48,6 +48,24 @@ function formatSp(iso: string) {
   }).format(new Date(iso));
 }
 
+function reasonLabel(reason: string | null): string {
+  if (!reason) return '—';
+  const map: Record<string, string> = {
+    api_activity: 'Uso da API (sessão ativa)',
+    session_issued: 'Login OK (token emitido)',
+    mfa_required: 'Desafio MFA',
+    mfa_ok: 'MFA OK',
+    mfa_bad_code: 'MFA código inválido',
+    login_verify_required: 'Verificação por e-mail',
+    login_verify_ok: 'E-mail verificado',
+    bad_password: 'Senha inválida',
+    invalid_user: 'Usuário inválido',
+    pending_verify: 'E-mail pendente',
+    inactive: 'Conta inativa',
+  };
+  return map[reason] || reason;
+}
+
 export default function LoginsPage() {
   const [q, setQ] = useState('');
   const [success, setSuccess] = useState('');
@@ -89,7 +107,7 @@ export default function LoginsPage() {
     <div>
       <PageHeader
         title="Logins diários"
-        subtitle="Quem executou cada tentativa de auth no InstaBuss — e o token do dia, se existir (America/Sao_Paulo)."
+        subtitle="Logins e uso autenticado (qualquer chamada, a cada ~5 min) — quem está na sessão e o token do dia (America/Sao_Paulo)."
       />
 
       <form className="toolbar fade-up" onSubmit={onSubmit}>
@@ -186,7 +204,11 @@ export default function LoginsPage() {
                             {row.success ? 'Sucesso' : 'Falha / desafio'}
                           </span>
                         </td>
-                        <td className="mono">{row.reason || '—'}</td>
+                        <td>
+                          <span className="mono" title={row.reason || undefined}>
+                            {reasonLabel(row.reason)}
+                          </span>
+                        </td>
                         <td>
                           {token ? (
                             <span className="mono" title={token}>
