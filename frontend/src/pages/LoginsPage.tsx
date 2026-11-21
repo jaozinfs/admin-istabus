@@ -51,19 +51,21 @@ function formatSp(iso: string) {
 export default function LoginsPage() {
   const [q, setQ] = useState('');
   const [success, setSuccess] = useState('');
-  const [date, setDate] = useState(todaySp);
+  // Vazio = todos os dias; o usuário pode filtrar um dia SP.
+  const [date, setDate] = useState('');
   const [page, setPage] = useState(1);
   const [data, setData] = useState<Page | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  async function load(p = page) {
+  async function load(p = page, dateOverride?: string) {
     setLoading(true);
     try {
+      const day = dateOverride !== undefined ? dateOverride : date;
       const qs = new URLSearchParams({ page: String(p), limit: '25' });
       if (q.trim()) qs.set('q', q.trim());
       if (success) qs.set('success', success);
-      if (date) qs.set('date', date);
+      if (day) qs.set('date', day);
       setData(await api<Page>(`/ops/logins?${qs}`));
       setError('');
       setPage(p);
@@ -95,7 +97,7 @@ export default function LoginsPage() {
           type="date"
           value={date}
           onChange={(e) => setDate(e.target.value)}
-          title="Dia (SP)"
+          title="Dia (SP) — vazio = todos"
         />
         <input
           style={{ flex: 1 }}
@@ -111,6 +113,32 @@ export default function LoginsPage() {
         <button type="submit" disabled={loading} className="shiny">
           {loading ? <Spinner size={16} label="Filtrando…" /> : 'Filtrar'}
         </button>
+        {date ? (
+          <button
+            type="button"
+            className="secondary"
+            disabled={loading}
+            onClick={() => {
+              setDate('');
+              void load(1, '');
+            }}
+          >
+            Limpar data
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="secondary"
+            disabled={loading}
+            onClick={() => {
+              const d = todaySp();
+              setDate(d);
+              void load(1, d);
+            }}
+          >
+            Hoje
+          </button>
+        )}
       </form>
 
       {error ? <p className="error">{error}</p> : null}

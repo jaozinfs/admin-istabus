@@ -8,6 +8,8 @@ import { IbWhatsappScheduled } from '../entities/ib-whatsapp-scheduled.entity';
 
 @Injectable()
 export class OpsService {
+  private tokenHintReady: boolean | null = null;
+
   constructor(
     @InjectRepository(IbWhatsappScheduled)
     private readonly scheduled: Repository<IbWhatsappScheduled>,
@@ -18,6 +20,33 @@ export class OpsService {
     @InjectRepository(IbUser)
     private readonly users: Repository<IbUser>,
   ) {}
+
+  /** Garante coluna token_hint (shared DB; migration InstaBuss pode ainda não ter rodado). */
+  private async ensureTokenHintColumn(): Promise<boolean> {
+    if (this.tokenHintReady != null) return this.tokenHintReady;
+    try {
+      await this.logins.query(`
+        ALTER TABLE "user_login_audits"
+        ADD COLUMN IF NOT EXISTS "token_hint" character varying(64)
+      `);
+      this.tokenHintReady = true;
+    } catch {
+      try {
+        const rows: Array<{ exists: boolean }> = await this.logins.query(`
+          SELECT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'user_login_audits'
+              AND column_name = 'token_hint'
+          ) AS "exists"
+        `);
+        this.tokenHintReady = Boolean(rows?.[0]?.exists);
+      } catch {
+        this.tokenHintReady = false;
+      }
+    }
+    return this.tokenHintReady;
+  }
 
   /**
    * Dia civil America/Sao_Paulo (UTC-3 o ano todo desde 2019).
@@ -269,21 +298,58 @@ export class OpsService {
   }) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 25));
+
+    try {
+      const exists: Array<{ exists: boolean }> = await this.logins.query(`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name = 'user_login_audits'
+        ) AS "exists"
+      `);
+      if (!exists?.[0]?.exists) {
+        return {
+          items: [],
+          total: 0,
+          page,
+          limit,
+          pageCount: 1,
+          day: null,
+          timezone: 'America/Sao_Paulo',
+          warning: 'Tabela user_login_audits ainda não existe no banco.',
+        };
+      }
+    } catch {
+      return {
+        items: [],
+        total: 0,
+        page,
+        limit,
+        pageCount: 1,
+        day: null,
+        timezone: 'America/Sao_Paulo',
+        warning: 'Não foi possível ler user_login_audits.',
+      };
+    }
+
+    const hasTokenHint = await this.ensureTokenHintColumn();
+
+    const selectCols = [
+      'a.id AS id',
+      'a.user_id AS "userId"',
+      'a.email AS email',
+      'a.success AS success',
+      'a.reason AS reason',
+      'a.ip AS ip',
+      'a.user_agent AS "userAgent"',
+      'a.created_at AS "createdAt"',
+      'u.name AS "userName"',
+    ];
+    if (hasTokenHint) selectCols.splice(7, 0, 'a.token_hint AS "tokenHint"');
+
     const qb = this.logins
       .createQueryBuilder('a')
       .leftJoin(IbUser, 'u', 'u.id = a.user_id')
-      .select([
-        'a.id AS id',
-        'a.user_id AS "userId"',
-        'a.email AS email',
-        'a.success AS success',
-        'a.reason AS reason',
-        'a.ip AS ip',
-        'a.user_agent AS "userAgent"',
-        'a.token_hint AS "tokenHint"',
-        'a.created_at AS "createdAt"',
-        'u.name AS "userName"',
-      ])
+      .select(selectCols)
       .orderBy('a.created_at', 'DESC');
 
     if (query.success === 'true') qb.andWhere('a.success = true');
@@ -305,8 +371,9 @@ export class OpsService {
 
     const q = query.q?.trim();
     if (q) {
+      const tokenClause = hasTokenHint ? ' OR a.token_hint ILIKE :q' : '';
       qb.andWhere(
-        `(a.email ILIKE :q OR a.ip ILIKE :q OR a.reason ILIKE :q OR a.user_agent ILIKE :q OR a.token_hint ILIKE :q OR u.name ILIKE :q)`,
+        `(a.email ILIKE :q OR a.ip ILIKE :q OR a.reason ILIKE :q OR a.user_agent ILIKE :q OR u.name ILIKE :q${tokenClause})`,
         { q: `%${q}%` },
       );
     }
@@ -317,10 +384,8 @@ export class OpsService {
       .limit(limit)
       .getRawMany();
 
-    // Se o filtro é um dia, resolve o token emitido no dia (por user/email)
-    // para linhas que não trouxerem token_hint próprio.
     const dayTokenByKey = new Map<string, string>();
-    if (day) {
+    if (day && hasTokenHint) {
       const { start, end } = this.dayRange(day);
       const tokenRows = await this.logins
         .createQueryBuilder('a')
@@ -352,7 +417,7 @@ export class OpsService {
 
     return {
       items: rows.map((row) => {
-        const own = (row.tokenHint as string | null) || null;
+        const own = hasTokenHint ? ((row.tokenHint as string | null) || null) : null;
         const dayToken =
           own ||
           (row.userId ? dayTokenByKey.get(`u:${row.userId}`) : undefined) ||
