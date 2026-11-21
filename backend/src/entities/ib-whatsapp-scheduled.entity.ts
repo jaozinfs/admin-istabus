@@ -64,6 +64,15 @@ export class IbWhatsappScheduled {
   @Column({ name: 'broadcast_held', type: 'int', default: 0 })
   broadcastHeld: number;
 
+  @Column({ name: 'livedata_trigger_id', type: 'uuid', nullable: true })
+  livedataTriggerId: string | null;
+
+  @Column({ name: 'broadcast_paused_at', type: 'timestamptz', nullable: true })
+  broadcastPausedAt: Date | null;
+
+  @Column({ name: 'broadcast_held_pause_reason', type: 'varchar', length: 32, nullable: true })
+  broadcastHeldPauseReason: string | null;
+
   @Column({ name: 'error_message', type: 'text', nullable: true })
   errorMessage: string | null;
 

@@ -120,7 +120,8 @@ function pickMetaInt(meta: StripeMeta | null, key: string): number | null {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
-function resolveOne(
+/** Snapshot do banco primeiro (feed/story/social). */
+function resolveStoredFirst(
   stored: number | null | undefined,
   stripeVal: number | null,
   freeVal: number,
@@ -128,6 +129,21 @@ function resolveOne(
 ): { value: number; source: 'stored' | 'stripe' | 'free' } {
   if (stored != null) return { value: stored, source: 'stored' };
   if (active && stripeVal != null) return { value: stripeVal, source: 'stripe' };
+  return { value: freeVal, source: 'free' };
+}
+
+/**
+ * Paridade com InstaBuss (quota.service): plano ativo → metadata Stripe
+ * atual vence o snapshot salvo na assinatura (ex.: cota WA Meta antiga 300).
+ */
+function resolveStripeFirst(
+  stored: number | null | undefined,
+  stripeVal: number | null,
+  freeVal: number,
+  active: boolean,
+): { value: number; source: 'stored' | 'stripe' | 'free' } {
+  if (active && stripeVal != null) return { value: stripeVal, source: 'stripe' };
+  if (stored != null) return { value: stored, source: 'stored' };
   return { value: freeVal, source: 'free' };
 }
 
@@ -142,67 +158,67 @@ export function resolveEffectiveQuotas(
   const meta = opts.stripeMeta ?? null;
   const active = opts.active;
 
-  const feed = resolveOne(
+  const feed = resolveStoredFirst(
     raw.feedLimit,
     pickMetaInt(meta, 'cota_feed'),
     free.feed,
     active,
   );
-  const story = resolveOne(
+  const story = resolveStoredFirst(
     raw.storyLimit,
     pickMetaInt(meta, 'cota_story'),
     free.story,
     active,
   );
-  const genia = resolveOne(
+  const genia = resolveStripeFirst(
     raw.geniaLimit,
     pickMetaInt(meta, 'cota_genia'),
     free.genia,
     active,
   );
-  const genVideo = resolveOne(
+  const genVideo = resolveStripeFirst(
     raw.genVideoLimit,
     pickMetaInt(meta, 'cota_gen_video'),
     free.genVideo,
     active,
   );
-  const waGroup = resolveOne(
+  const waGroup = resolveStripeFirst(
     raw.whatsappGroupBaileysLimit,
     pickMetaInt(meta, 'cota_whatsapp_grupo_baileys'),
     free.whatsappGroupBaileys,
     active,
   );
-  const waBaileys = resolveOne(
+  const waBaileys = resolveStripeFirst(
     raw.whatsappBroadcastBaileysLimit,
     pickMetaInt(meta, 'cota_whatsapp_disparo_baileys'),
     free.whatsappBroadcastBaileys,
     active,
   );
-  const waMeta = resolveOne(
+  const waMeta = resolveStripeFirst(
     raw.whatsappBroadcastMetaLimit,
     pickMetaInt(meta, 'cota_whatsapp_disparo_meta'),
     free.whatsappBroadcastMeta,
     active,
   );
-  const ig = resolveOne(
+  const ig = resolveStoredFirst(
     raw.instagramAccountsLimit,
     pickMetaInt(meta, 'cota_instagram'),
     free.instagramAccounts,
     active,
   );
-  const tk = resolveOne(
+  const tk = resolveStoredFirst(
     raw.tiktokAccountsLimit,
     pickMetaInt(meta, 'cota_tiktok'),
     free.tiktokAccounts,
     active,
   );
-  const li = resolveOne(
+  const li = resolveStoredFirst(
     raw.linkedinAccountsLimit,
     pickMetaInt(meta, 'cota_linkedin'),
     free.linkedinAccounts,
     active,
   );
-  const yt = resolveOne(
+  const yt = resolveStoredFirst(
     raw.youtubeChannelsLimit,
     pickMetaInt(meta, 'cota_youtube'),
     free.youtubeChannels,

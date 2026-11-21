@@ -1,9 +1,11 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import Spinner from '../components/ui/Spinner';
 import { api } from '../lib/api';
 import {
   getSecret,
   getToken,
+  hasEnvSecret,
   setSecret,
   setToken,
   setUsername,
@@ -11,11 +13,12 @@ import {
 
 export default function AuthPage() {
   const nav = useNavigate();
+  const envLocked = hasEnvSecret();
   const [secret, setSecretInput] = useState(getSecret());
   const [username, setUser] = useState('');
   const [password, setPassword] = useState('');
   const [bootstrapSecret, setBootstrapSecret] = useState('');
-  const [bootstrapped, setBootstrapped] = useState<boolean | null>(null);
+  const [showBootstrap, setShowBootstrap] = useState(false);
   const [creds, setCreds] = useState<{ username: string; password: string } | null>(
     null,
   );
@@ -26,32 +29,11 @@ export default function AuthPage() {
     if (getToken()) nav('/', { replace: true });
   }, [nav]);
 
-  async function refreshStatus(currentSecret = secret) {
-    setSecret(currentSecret);
-    try {
-      const st = await api<{ bootstrapped: boolean }>(
-        '/auth/status',
-        {},
-        { auth: false },
-      );
-      setBootstrapped(st.bootstrapped);
-      setError('');
-    } catch (e) {
-      setBootstrapped(null);
-      setError(e instanceof Error ? e.message : 'Falha ao falar com a API');
-    }
-  }
-
-  useEffect(() => {
-    if (secret) void refreshStatus(secret);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   async function onLogin(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError('');
-    setSecret(secret);
+    if (!envLocked) setSecret(secret);
     try {
       const res = await api<{ accessToken: string; username: string }>(
         '/auth/login',
@@ -75,7 +57,7 @@ export default function AuthPage() {
     e.preventDefault();
     setLoading(true);
     setError('');
-    setSecret(secret);
+    if (!envLocked) setSecret(secret);
     try {
       const res = await api<{ username: string; password: string }>(
         '/auth/bootstrap',
@@ -88,7 +70,7 @@ export default function AuthPage() {
       setCreds(res);
       setUser(res.username);
       setPassword(res.password);
-      setBootstrapped(true);
+      setShowBootstrap(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Bootstrap falhou');
     } finally {
@@ -96,40 +78,60 @@ export default function AuthPage() {
     }
   }
 
+  const secretReady = Boolean(getSecret() || secret);
+
   return (
     <div className="auth-wrap">
       <div className="panel auth-card">
-        <h1>admin-istabus</h1>
-        <p className="muted">Acesso exclusivo com secret + login único.</p>
-
-        <div className="stack">
-          <label className="muted">ADMIN_ACCESS_SECRET</label>
-          <input
-            type="password"
-            value={secret}
-            onChange={(e) => setSecretInput(e.target.value)}
-            placeholder="cole o secret da API"
-          />
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => refreshStatus(secret)}
-          >
-            Validar secret / status
-          </button>
+        <div className="auth-brand-mark" aria-hidden>
+          ai
         </div>
+        <h1>
+          admin-<span style={{ color: 'var(--accent)' }}>istabus</span>
+        </h1>
+        <p className="muted">
+          Acesso restrito: secret da API + login de operador admin.
+        </p>
 
-        {bootstrapped === false && (
-          <form className="stack" onSubmit={onBootstrap}>
-            <label className="muted">ADMIN_BOOTSTRAP_SECRET (1ª vez)</label>
+        {!envLocked && (
+          <div className="stack">
+            <label className="field-label">ADMIN_ACCESS_SECRET</label>
             <input
               type="password"
-              value={bootstrapSecret}
-              onChange={(e) => setBootstrapSecret(e.target.value)}
+              value={secret}
+              onChange={(e) => setSecretInput(e.target.value)}
+              placeholder="cole o secret da API"
+              autoComplete="off"
             />
-            <button disabled={loading || !secret}>Gerar meu login</button>
-          </form>
+          </div>
         )}
+
+        {envLocked && (
+          <span className="badge ok" style={{ marginTop: '0.75rem' }}>
+            secret da API via ambiente
+          </span>
+        )}
+
+        <form className="stack" onSubmit={onLogin}>
+          <label className="field-label">Usuário admin</label>
+          <input
+            value={username}
+            onChange={(e) => setUser(e.target.value)}
+            autoComplete="username"
+            required
+          />
+          <label className="field-label">Senha</label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            required
+          />
+          <button className="shiny" disabled={loading || !secretReady}>
+            {loading ? <Spinner size={16} label="Entrando…" /> : 'Entrar'}
+          </button>
+        </form>
 
         {creds && (
           <div className="success-box" style={{ marginTop: '1rem' }}>
@@ -137,17 +139,38 @@ export default function AuthPage() {
           </div>
         )}
 
-        {(bootstrapped || creds) && (
-          <form className="stack" onSubmit={onLogin}>
-            <label className="muted">Usuário</label>
-            <input value={username} onChange={(e) => setUser(e.target.value)} />
-            <label className="muted">Senha</label>
+        <div style={{ marginTop: '1.1rem' }}>
+          <button
+            type="button"
+            className="secondary"
+            style={{ width: '100%' }}
+            onClick={() => setShowBootstrap((v) => !v)}
+          >
+            {showBootstrap ? 'Ocultar bootstrap' : 'Primeiro acesso (bootstrap)'}
+          </button>
+        </div>
+
+        {showBootstrap && (
+          <form className="stack" onSubmit={onBootstrap}>
+            <p className="hint">
+              Só funciona uma vez, com ADMIN_BOOTSTRAP_SECRET. Depois fica
+              bloqueado.
+            </p>
+            <label className="field-label">ADMIN_BOOTSTRAP_SECRET</label>
             <input
               type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              value={bootstrapSecret}
+              onChange={(e) => setBootstrapSecret(e.target.value)}
+              autoComplete="off"
+              required
             />
-            <button disabled={loading || !secret}>Entrar</button>
+            <button className="shiny" disabled={loading || !secretReady}>
+              {loading ? (
+                <Spinner size={16} label="Gerando…" />
+              ) : (
+                'Gerar login admin'
+              )}
+            </button>
           </form>
         )}
 

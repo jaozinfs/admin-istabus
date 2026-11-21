@@ -47,3 +47,6 @@ cd frontend && cp .env.example .env && npm install && npm run dev
 | `GET /api/accounts*` | secret + JWT |
 | `PATCH /api/accounts/plan` | secret + JWT |
 | `GET /api/usage/daily` | secret + JWT |
+| `GET /api/ops/broadcasts` | secret + JWT |
+| `GET /api/ops/purchases` | secret + JWT |
+| `GET /api/ops/logins` | secret + JWT |

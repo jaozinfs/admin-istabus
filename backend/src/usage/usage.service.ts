@@ -21,6 +21,28 @@ const IN_PROGRESS = new Set([
   'partial',
 ]);
 
+/** Aceitas pela Meta / em voo / concluídas (funil “enviadas”). */
+const SENT_STATUSES = [
+  'held',
+  'accepted',
+  'sent',
+  'delivered',
+  'read',
+  'played',
+] as const;
+
+/** Confirmação de entrega no aparelho (webhook). */
+const DELIVERED_STATUSES = ['delivered', 'read', 'played'] as const;
+
+const PAUSEABLE_BROADCAST = [
+  'preparing',
+  'queued',
+  'processing',
+  'partial',
+] as const;
+
+const ADMIN_MANUAL_PAUSE_REASON = 'admin_manual';
+
 @Injectable()
 export class UsageService {
   constructor(
@@ -35,23 +57,24 @@ export class UsageService {
     private readonly stripeMeta: StripeMetaService,
   ) {}
 
+  /**
+   * Dia civil America/Sao_Paulo (UTC-3 o ano todo desde 2019).
+   * Antes usava meia-noite UTC — “hoje” no BR puxava ontem à noite.
+   */
   private dayRange(date?: string) {
-    const base = date ? new Date(`${date}T00:00:00.000Z`) : new Date();
-    if (Number.isNaN(base.getTime())) {
-      const now = new Date();
-      const start = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-      );
-      const end = new Date(start);
-      end.setUTCDate(end.getUTCDate() + 1);
-      return { start, end, day: start.toISOString().slice(0, 10) };
-    }
-    const start = new Date(
-      Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate()),
-    );
-    const end = new Date(start);
-    end.setUTCDate(end.getUTCDate() + 1);
-    return { start, end, day: start.toISOString().slice(0, 10) };
+    const tz = 'America/Sao_Paulo';
+    const day =
+      date && /^\d{4}-\d{2}-\d{2}$/.test(date.trim())
+        ? date.trim()
+        : new Intl.DateTimeFormat('en-CA', {
+            timeZone: tz,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          }).format(new Date());
+    const start = new Date(`${day}T00:00:00-03:00`);
+    const end = new Date(`${day}T24:00:00-03:00`);
+    return { start, end, day, timezone: tz };
   }
 
   async daily(params: {
@@ -100,6 +123,10 @@ export class UsageService {
         total: number;
         byCategory: Record<string, number>;
         byStatus: Record<string, number>;
+        sent: number;
+        deliveredAll: number;
+        delivered: number;
+        deliveredLivedata: number;
       }
     >();
 
@@ -111,12 +138,76 @@ export class UsageService {
         total: 0,
         byCategory: {},
         byStatus: {},
+        sent: 0,
+        deliveredAll: 0,
+        delivered: 0,
+        deliveredLivedata: 0,
       };
       const n = Number(row.count) || 0;
       cur.total += n;
       cur.byCategory[row.category] = (cur.byCategory[row.category] || 0) + n;
       cur.byStatus[row.status] = (cur.byStatus[row.status] || 0) + n;
       byAccount.set(key, cur);
+    }
+
+    const funnelQb = this.audits
+      .createQueryBuilder('a')
+      .leftJoin(
+        IbWhatsappScheduled,
+        's',
+        's.id = a.scheduledMessageId',
+      )
+      .select('a.companyId', 'companyId')
+      .addSelect('a.userId', 'userId')
+      .addSelect(
+        `COUNT(*) FILTER (WHERE a.status IN (:...sentStatuses))`,
+        'sent',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE a.status IN (:...deliveredStatuses))`,
+        'deliveredAll',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE a.status IN (:...deliveredStatuses) AND s.livedataTriggerId IS NULL)`,
+        'delivered',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE a.status IN (:...deliveredStatuses) AND s.livedataTriggerId IS NOT NULL)`,
+        'deliveredLivedata',
+      )
+      .where('COALESCE(a.sentAt, a.createdAt) >= :start', { start })
+      .andWhere('COALESCE(a.sentAt, a.createdAt) < :end', { end })
+      .setParameters({
+        sentStatuses: [...SENT_STATUSES],
+        deliveredStatuses: [...DELIVERED_STATUSES],
+      })
+      .groupBy('a.companyId')
+      .addGroupBy('a.userId');
+    if (params.companyId) {
+      funnelQb.andWhere('a.companyId = :companyId', {
+        companyId: params.companyId,
+      });
+    }
+    if (params.userId) {
+      funnelQb.andWhere('a.userId = :userId', { userId: params.userId });
+    }
+    const funnelRows = await funnelQb.getRawMany<{
+      companyId: string | null;
+      userId: string;
+      sent: string;
+      deliveredAll: string;
+      delivered: string;
+      deliveredLivedata: string;
+    }>();
+
+    for (const row of funnelRows) {
+      const key = `${row.companyId || 'none'}::${row.userId}`;
+      const cur = byAccount.get(key);
+      if (!cur) continue;
+      cur.sent = Number(row.sent) || 0;
+      cur.deliveredAll = Number(row.deliveredAll) || 0;
+      cur.delivered = Number(row.delivered) || 0;
+      cur.deliveredLivedata = Number(row.deliveredLivedata) || 0;
     }
 
     const baseAccounts = [...byAccount.values()].sort(
@@ -179,6 +270,12 @@ export class UsageService {
             metaLimit && metaLimit > 0
               ? Math.round((metaUsed / metaLimit) * 100)
               : null,
+          funnel: {
+            sent: row.sent,
+            deliveredAll: row.deliveredAll,
+            delivered: row.delivered,
+            deliveredLivedata: row.deliveredLivedata,
+          },
         };
       }),
     );
@@ -186,7 +283,71 @@ export class UsageService {
     return {
       day,
       totalMessages: accounts.reduce((s, a) => s + a.total, 0),
+      totals: {
+        sent: accounts.reduce((s, a) => s + a.funnel.sent, 0),
+        deliveredAll: accounts.reduce((s, a) => s + a.funnel.deliveredAll, 0),
+        delivered: accounts.reduce((s, a) => s + a.funnel.delivered, 0),
+        deliveredLivedata: accounts.reduce(
+          (s, a) => s + a.funnel.deliveredLivedata,
+          0,
+        ),
+      },
       accounts,
+    };
+  }
+
+  /**
+   * Para todos os disparos ativos da conta (empresa ou pessoal).
+   * Espelha o pause manual do InstaBuss: worker/broker respeitam `broadcast_status=paused`.
+   */
+  async pauseAccount(params: { userId: string; companyId?: string | null }) {
+    const userId = params.userId?.trim();
+    if (!userId) throw new NotFoundException('userId obrigatório');
+    const companyId = params.companyId?.trim() || null;
+
+    const user = await this.users.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Conta não encontrada');
+
+    const now = new Date();
+    const ownerClause = companyId
+      ? 'company_id = :companyId'
+      : 'user_id = :userId AND company_id IS NULL';
+    const ownerParams = { userId, companyId };
+
+    const preparing = await this.scheduled
+      .createQueryBuilder()
+      .update(IbWhatsappScheduled)
+      .set({
+        broadcastStatus: 'cancelled',
+        status: 'cancelled',
+        errorMessage: 'Cancelado pelo admin (parar conta)',
+      })
+      .where(ownerClause, ownerParams)
+      .andWhere('broadcast_status = :preparing', { preparing: 'preparing' })
+      .execute();
+
+    const paused = await this.scheduled
+      .createQueryBuilder()
+      .update(IbWhatsappScheduled)
+      .set({
+        broadcastStatus: 'paused',
+        broadcastPausedAt: now,
+        broadcastHeldPauseReason: ADMIN_MANUAL_PAUSE_REASON,
+      })
+      .where(ownerClause, ownerParams)
+      .andWhere('broadcast_status IN (:...statuses)', {
+        statuses: [...PAUSEABLE_BROADCAST].filter((s) => s !== 'preparing'),
+      })
+      .execute();
+
+    return {
+      userId,
+      companyId,
+      scope: companyId ? ('company' as const) : ('personal' as const),
+      cancelledPreparing: preparing.affected ?? 0,
+      paused: paused.affected ?? 0,
+      totalStopped: (preparing.affected ?? 0) + (paused.affected ?? 0),
+      at: now.toISOString(),
     };
   }
 

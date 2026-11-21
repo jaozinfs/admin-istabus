@@ -45,6 +45,19 @@ export class AuthService implements OnModuleInit {
     };
   }
 
+  async me(operatorId?: string) {
+    if (!operatorId) throw new UnauthorizedException('Sessão inválida');
+    const op = await this.operators.findOne({ where: { id: operatorId } });
+    if (!op) throw new UnauthorizedException('Operador inválido');
+    return {
+      operatorId: op.id,
+      username: op.username,
+      lastLoginAt: op.lastLoginAt,
+      bootstrapped: true,
+      operators: await this.operators.count(),
+    };
+  }
+
   async bootstrap(dto: BootstrapDto) {
     const expected = this.config.get<string>('ADMIN_BOOTSTRAP_SECRET')?.trim();
     if (!expected || dto.bootstrapSecret !== expected) {

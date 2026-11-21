@@ -12,7 +12,15 @@ export default function Toast({
   useEffect(() => {
     const t = window.setTimeout(onClose, 3200);
     return () => window.clearTimeout(t);
-  }, [onClose]);
+  }, [onClose, message, kind]);
 
-  return <div className={`toast ${kind === 'error' ? 'error' : ''}`}>{message}</div>;
+  return (
+    <div
+      className={`toast ${kind === 'error' ? 'error' : ''}`}
+      role="status"
+      aria-live="assertive"
+    >
+      {message}
+    </div>
+  );
 }

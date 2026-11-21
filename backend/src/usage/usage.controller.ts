@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { UsageService } from './usage.service';
 
 @Controller('usage')
@@ -33,6 +33,17 @@ export class UsageController {
       userId,
       page: page ? Number(page) : 1,
       pageSize: pageSize ? Number(pageSize) : 20,
+    });
+  }
+
+  /** Pausa/cancela todos os disparos ativos da conta (empresa ou pessoal). */
+  @Post('pause-account')
+  pauseAccount(
+    @Body() body: { userId?: string; companyId?: string | null },
+  ) {
+    return this.usage.pauseAccount({
+      userId: body.userId ?? '',
+      companyId: body.companyId,
     });
   }
 

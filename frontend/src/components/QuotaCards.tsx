@@ -1,3 +1,4 @@
+import ProgressBar from './ui/ProgressBar';
 import type { EffectiveQuotas } from '../lib/types';
 
 const LABELS: Array<{
@@ -33,6 +34,13 @@ function sourceLabel(s: string) {
   return 'plano free';
 }
 
+function toneFor(pct: number): 'ok' | 'warn' | 'danger' | 'accent' {
+  if (pct >= 90) return 'danger';
+  if (pct >= 70) return 'warn';
+  if (pct > 0) return 'ok';
+  return 'accent';
+}
+
 export default function QuotaCards({
   effective,
 }: {
@@ -53,11 +61,7 @@ export default function QuotaCards({
               {used != null ? `${used} / ${limit}` : limit}
             </div>
             <div className="q-meta">fonte: {sourceLabel(source)}</div>
-            {used != null && (
-              <div className="bar">
-                <span style={{ width: `${pct}%` }} />
-              </div>
-            )}
+            {used != null && <ProgressBar value={pct} tone={toneFor(pct)} />}
           </div>
         );
       })}

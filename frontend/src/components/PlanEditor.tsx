@@ -1,4 +1,5 @@
 import { FormEvent, useState } from 'react';
+import Spinner from './ui/Spinner';
 import { api } from '../lib/api';
 import type { PlanInfo, StoredQuotas } from '../lib/types';
 
@@ -141,14 +142,14 @@ export default function PlanEditor({
         <label className="field-label">cota genia</label>
         <input value={genia} onChange={(e) => setGenia(e.target.value)} />
 
-        <button disabled={loading} type="submit">
-          {loading ? 'Salvando…' : 'Salvar alterações'}
+        <button disabled={loading} type="submit" className="shiny">
+          {loading ? <Spinner size={16} label="Salvando…" /> : 'Salvar alterações'}
         </button>
       </form>
 
       {askPass && (
         <div className="modal-backdrop" onClick={() => !loading && setAskPass(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
             <h3>Confirmar com senha</h3>
             <p className="hint">
               Digite a senha do operador admin para aplicar mudanças de plano/cotas.
@@ -162,8 +163,8 @@ export default function PlanEditor({
                 onChange={(e) => setPassword(e.target.value)}
               />
               <div className="toolbar" style={{ marginBottom: 0 }}>
-                <button type="submit" disabled={loading}>
-                  Confirmar
+                <button type="submit" disabled={loading} className="shiny">
+                  {loading ? <Spinner size={16} label="Confirmando…" /> : 'Confirmar'}
                 </button>
                 <button
                   type="button"

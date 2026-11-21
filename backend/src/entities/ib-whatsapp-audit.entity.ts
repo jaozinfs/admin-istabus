@@ -11,6 +11,9 @@ export class IbWhatsappAudit {
   @Column({ name: 'company_id', type: 'uuid', nullable: true })
   companyId: string | null;
 
+  @Column({ name: 'scheduled_message_id', type: 'uuid', nullable: true })
+  scheduledMessageId: string | null;
+
   @Column({ type: 'varchar', length: 24 })
   category: string;
 

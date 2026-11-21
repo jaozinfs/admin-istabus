@@ -9,6 +9,7 @@ import { JwtAuthGuard } from './security/jwt-auth.guard';
 import { AuthModule } from './auth/auth.module';
 import { AccountsModule } from './accounts/accounts.module';
 import { UsageModule } from './usage/usage.module';
+import { OpsModule } from './ops/ops.module';
 import { HealthController } from './health.controller';
 import { AdminOperator } from './entities/admin-operator.entity';
 import { IbUser } from './entities/ib-user.entity';
@@ -16,6 +17,8 @@ import { IbCompany } from './entities/ib-company.entity';
 import { IbWhatsappAudit } from './entities/ib-whatsapp-audit.entity';
 import { IbWhatsappScheduled } from './entities/ib-whatsapp-scheduled.entity';
 import { IbPost } from './entities/ib-post.entity';
+import { IbMetaQuotaPurchase } from './entities/ib-meta-quota-purchase.entity';
+import { IbUserLoginAudit } from './entities/ib-user-login-audit.entity';
 
 @Module({
   imports: [
@@ -43,6 +46,8 @@ import { IbPost } from './entities/ib-post.entity';
           IbWhatsappAudit,
           IbWhatsappScheduled,
           IbPost,
+          IbMetaQuotaPurchase,
+          IbUserLoginAudit,
         ],
         synchronize: false,
         ssl:
@@ -54,6 +59,7 @@ import { IbPost } from './entities/ib-post.entity';
     AuthModule,
     AccountsModule,
     UsageModule,
+    OpsModule,
   ],
   controllers: [HealthController],
   providers: [

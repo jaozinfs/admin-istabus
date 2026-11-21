@@ -1,5 +1,9 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import EmptyState from '../components/ui/EmptyState';
+import PageHeader from '../components/ui/PageHeader';
+import { CardListSkeleton, TableSkeleton } from '../components/ui/Skeleton';
+import Spinner from '../components/ui/Spinner';
 import { api } from '../lib/api';
 import type { EffectiveQuotas, PlanInfo } from '../lib/types';
 
@@ -17,7 +21,8 @@ export default function AccountsPage() {
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [searched, setSearched] = useState(false);
   const nav = useNavigate();
 
   async function load(query = q) {
@@ -28,6 +33,7 @@ export default function AccountsPage() {
       );
       setRows(data);
       setError('');
+      setSearched(Boolean(query.trim()));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro');
     } finally {
@@ -46,72 +52,137 @@ export default function AccountsPage() {
 
   return (
     <div>
-      <h1 className="page-title">Contas</h1>
-      <p className="page-sub">Usuários InstaBuss com plano efetivo e cotas</p>
-      <form className="toolbar" onSubmit={onSearch}>
+      <PageHeader
+        title="Contas"
+        subtitle="Usuários InstaBuss com plano efetivo e cotas"
+      />
+      <form className="toolbar fade-up" onSubmit={onSearch}>
         <input
           style={{ flex: 1 }}
           placeholder="buscar email, nome, empresa"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        <button type="submit" disabled={loading}>
-          {loading ? 'Buscando…' : 'Buscar'}
+        <button type="submit" disabled={loading} className="shiny">
+          {loading ? <Spinner size={16} label="Buscando…" /> : 'Buscar'}
         </button>
       </form>
       {error && <p className="error">{error}</p>}
-      <div className="panel">
-        <table>
-          <thead>
-            <tr>
-              <th>Conta</th>
-              <th>Empresa</th>
-              <th>Plano</th>
-              <th>WA Meta</th>
-              <th>Feed</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr
-                key={r.userId}
-                className="row-click"
-                onClick={() => nav(`/accounts/${r.userId}`)}
-              >
-                <td>
-                  <Link to={`/accounts/${r.userId}`} onClick={(e) => e.stopPropagation()}>
-                    {r.email}
-                  </Link>
-                  <div className="muted">{r.name || r.status}</div>
-                </td>
-                <td>
-                  {r.company ? (
-                    <Link
-                      to={`/companies/${r.company.id}`}
-                      onClick={(e) => e.stopPropagation()}
+
+      <div className="panel fade-up">
+        {loading ? (
+          <>
+            <div className="desk-only">
+              <TableSkeleton rows={7} cols={5} />
+            </div>
+            <div className="mobile-only">
+              <CardListSkeleton rows={5} />
+            </div>
+          </>
+        ) : rows.length === 0 ? (
+          <EmptyState
+            icon={searched ? 'search' : 'inbox'}
+            title={searched ? 'Nenhuma conta encontrada' : 'Nenhuma conta ainda'}
+            hint={
+              searched
+                ? 'Tente outro email, nome ou empresa.'
+                : 'Quando houver usuários no InstaBuss, eles aparecem aqui.'
+            }
+          />
+        ) : (
+          <>
+            <div className="table-wrap desk-only">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Conta</th>
+                    <th>Empresa</th>
+                    <th>Plano</th>
+                    <th>WA Meta</th>
+                    <th>Feed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr
+                      key={r.userId}
+                      className="row-click"
+                      onClick={() => nav(`/accounts/${r.userId}`)}
                     >
-                      {r.company.name}
-                    </Link>
-                  ) : (
-                    <span className="muted">pessoal</span>
-                  )}
-                </td>
-                <td>
-                  <span className={`badge ${r.plan.active ? 'ok' : ''}`}>
-                    {r.plan.active ? 'ativo' : 'free'} · {r.plan.scope}
-                  </span>
-                  <div className="mono muted">{r.plan.stripeProductId || '—'}</div>
-                </td>
-                <td className="mono">
-                  {r.quotasEffective.whatsappBroadcastMetaLimit}
-                </td>
-                <td className="mono">
-                  {r.quotasEffective.feedUsed}/{r.quotasEffective.feedLimit}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                      <td>
+                        <Link
+                          to={`/accounts/${r.userId}`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {r.email}
+                        </Link>
+                        <div className="muted">{r.name || r.status}</div>
+                      </td>
+                      <td>
+                        {r.company ? (
+                          <Link
+                            to={`/companies/${r.company.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {r.company.name}
+                          </Link>
+                        ) : (
+                          <span className="muted">pessoal</span>
+                        )}
+                      </td>
+                      <td>
+                        <span className={`badge ${r.plan.active ? 'ok' : ''}`}>
+                          {r.plan.active ? 'ativo' : 'free'} · {r.plan.scope}
+                        </span>
+                        <div className="mono muted">
+                          {r.plan.stripeProductId || '—'}
+                        </div>
+                      </td>
+                      <td className="mono">
+                        {r.quotasEffective.whatsappBroadcastMetaLimit}
+                      </td>
+                      <td className="mono">
+                        {r.quotasEffective.feedUsed}/{r.quotasEffective.feedLimit}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mobile-card-list mobile-only">
+              {rows.map((r) => (
+                <div
+                  key={r.userId}
+                  className="mobile-card"
+                  onClick={() => nav(`/accounts/${r.userId}`)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      nav(`/accounts/${r.userId}`);
+                    }
+                  }}
+                >
+                  <div className="mobile-card-title">{r.email}</div>
+                  <div className="mobile-card-sub">{r.name || r.status}</div>
+                  <div className="mobile-card-meta">
+                    <span className={`badge ${r.plan.active ? 'ok' : ''}`}>
+                      {r.plan.active ? 'ativo' : 'free'}
+                    </span>
+                    <span className="meta-line">
+                      {r.company ? r.company.name : 'pessoal'}
+                    </span>
+                    <span className="mono meta-line">
+                      feed {r.quotasEffective.feedUsed}/{r.quotasEffective.feedLimit}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

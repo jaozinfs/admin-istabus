@@ -1,9 +1,8 @@
 import { Controller, Get } from '@nestjs/common';
-import { Public } from './security/public.decorator';
 
+/** Health autenticado — exige X-Admin-Secret + Bearer JWT (guards globais). */
 @Controller('health')
 export class HealthController {
-  @Public()
   @Get()
   health() {
     return { ok: true, service: 'admin-istabus' };

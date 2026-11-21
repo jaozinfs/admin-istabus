@@ -7,21 +7,27 @@ import { ConfigService } from '@nestjs/config';
 import { timingSafeEqual } from 'crypto';
 import { NextFunction, Request, Response } from 'express';
 
+/**
+ * Gate 1 — nenhuma rota da API responde sem ADMIN_ACCESS_SECRET.
+ * (Nem health. Nem auth. Nem OPTIONS de browser sem o header nas requests reais.)
+ */
 @Injectable()
 export class AdminAccessMiddleware implements NestMiddleware {
   constructor(private readonly config: ConfigService) {}
 
   use(req: Request, _res: Response, next: NextFunction) {
-    if (req.path === '/api/health' || req.path === '/health') {
+    // Preflight CORS não carrega X-Admin-Secret; o browser só valida headers.
+    if (req.method === 'OPTIONS') {
       return next();
     }
+
     const expected = this.config.get<string>('ADMIN_ACCESS_SECRET')?.trim();
     if (!expected) {
       throw new UnauthorizedException('ADMIN_ACCESS_SECRET não configurado');
     }
     const provided = String(req.header('x-admin-secret') || '');
     if (!safeEqual(provided, expected)) {
-      throw new UnauthorizedException('Secret inválido');
+      throw new UnauthorizedException('Acesso negado');
     }
     next();
   }

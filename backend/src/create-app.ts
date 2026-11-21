@@ -29,10 +29,11 @@ export async function createNestApp(
 
   app.enableCors({
     origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      if (origins.includes('*') || origins.includes(origin)) return cb(null, true);
-      if (/\.vercel\.app$/i.test(origin)) return cb(null, true);
-      return cb(null, origins.length === 0);
+      // Sem Origin (curl/script): CORS não aplica; JWT+secret ainda bloqueiam.
+      // Browser: só origens explícitas em FRONTEND_URL (sem wildcard vercel.app).
+      if (!origin) return cb(null, false);
+      if (origins.includes(origin)) return cb(null, true);
+      return cb(null, false);
     },
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Secret'],

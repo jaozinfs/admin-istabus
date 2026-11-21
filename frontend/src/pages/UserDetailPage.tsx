@@ -4,6 +4,7 @@ import PlanEditor from '../components/PlanEditor';
 import QuotaCards from '../components/QuotaCards';
 import StripeMetaBadge from '../components/StripeMetaBadge';
 import Toast from '../components/Toast';
+import { DetailSkeleton } from '../components/ui/Skeleton';
 import { api } from '../lib/api';
 import type { EffectiveQuotas, PlanInfo, StoredQuotas } from '../lib/types';
 
@@ -38,17 +39,22 @@ export default function UserDetailPage() {
   const { id } = useParams();
   const [data, setData] = useState<Detail | null>(null);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ msg: string; kind?: 'ok' | 'error' } | null>(
     null,
   );
 
   async function load() {
     if (!id) return;
+    setLoading(true);
     try {
       setData(await api<Detail>(`/accounts/users/${id}`));
       setError('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro');
+      setData(null);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -56,7 +62,18 @@ export default function UserDetailPage() {
     void load();
   }, [id]);
 
-  if (!data) return <p className="muted">{error || 'carregando…'}</p>;
+  if (loading && !data) return <DetailSkeleton />;
+
+  if (!data) {
+    return (
+      <div className="fade-up">
+        <Link className="back-link" to="/accounts">
+          ← contas
+        </Link>
+        <p className="error">{error || 'Conta não encontrada'}</p>
+      </div>
+    );
+  }
 
   const targetId =
     data.effectiveBillingScope === 'company' && data.company
@@ -64,7 +81,7 @@ export default function UserDetailPage() {
       : data.user.id;
 
   return (
-    <div>
+    <div className="fade-up">
       {toast && (
         <Toast
           message={toast.msg}
@@ -72,9 +89,9 @@ export default function UserDetailPage() {
           onClose={() => setToast(null)}
         />
       )}
-      <p className="muted">
-        <Link to="/accounts">← contas</Link>
-      </p>
+      <Link className="back-link" to="/accounts">
+        ← contas
+      </Link>
       <h1 className="page-title">{data.user.email}</h1>
       <p className="page-sub">
         {data.user.name || 'sem nome'} · {data.user.accountType} · {data.user.role} ·{' '}
