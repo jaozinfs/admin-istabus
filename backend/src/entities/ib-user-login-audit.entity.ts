@@ -28,6 +28,9 @@ export class IbUserLoginAudit {
   @Column({ name: 'user_agent', type: 'varchar', length: 512, nullable: true })
   userAgent: string | null;
 
+  @Column({ name: 'token_hint', type: 'varchar', length: 64, nullable: true })
+  tokenHint: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }

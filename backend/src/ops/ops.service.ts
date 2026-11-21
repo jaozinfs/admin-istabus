@@ -19,6 +19,40 @@ export class OpsService {
     private readonly users: Repository<IbUser>,
   ) {}
 
+  /**
+   * Dia civil America/Sao_Paulo (UTC-3 o ano todo desde 2019).
+   * `date` = YYYY-MM-DD; sem date → hoje SP.
+   */
+  private dayRange(date?: string) {
+    const tz = 'America/Sao_Paulo';
+    const day =
+      date && /^\d{4}-\d{2}-\d{2}$/.test(date.trim())
+        ? date.trim()
+        : new Intl.DateTimeFormat('en-CA', {
+            timeZone: tz,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          }).format(new Date());
+    const start = new Date(`${day}T00:00:00-03:00`);
+    const end = new Date(`${day}T24:00:00-03:00`);
+    return { start, end, day, timezone: tz };
+  }
+
+  /** Intervalo SP a partir de from/to (YYYY-MM-DD). to é inclusivo. */
+  private rangeBounds(from?: string, to?: string) {
+    const tz = 'America/Sao_Paulo';
+    let start: Date | null = null;
+    let end: Date | null = null;
+    if (from && /^\d{4}-\d{2}-\d{2}$/.test(from.trim())) {
+      start = new Date(`${from.trim()}T00:00:00-03:00`);
+    }
+    if (to && /^\d{4}-\d{2}-\d{2}$/.test(to.trim())) {
+      end = new Date(`${to.trim()}T24:00:00-03:00`);
+    }
+    return { start, end, timezone: tz };
+  }
+
   async listBroadcasts(query: {
     q?: string;
     page?: number;
@@ -26,6 +60,7 @@ export class OpsService {
     status?: string;
     from?: string;
     to?: string;
+    date?: string;
   }) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 25));
@@ -54,14 +89,19 @@ export class OpsService {
     if (query.status?.trim()) {
       qb.andWhere('m.broadcast_status = :status', { status: query.status.trim() });
     }
-    if (query.from) {
-      const from = new Date(query.from);
-      if (!Number.isNaN(from.getTime())) qb.andWhere('m.scheduled_at >= :from', { from });
+
+    if (query.date && /^\d{4}-\d{2}-\d{2}$/.test(query.date.trim())) {
+      const { start, end } = this.dayRange(query.date);
+      qb.andWhere('m.scheduled_at >= :from AND m.scheduled_at < :to', {
+        from: start,
+        to: end,
+      });
+    } else {
+      const { start, end } = this.rangeBounds(query.from, query.to);
+      if (start) qb.andWhere('m.scheduled_at >= :from', { from: start });
+      if (end) qb.andWhere('m.scheduled_at < :to', { to: end });
     }
-    if (query.to) {
-      const to = new Date(query.to);
-      if (!Number.isNaN(to.getTime())) qb.andWhere('m.scheduled_at < :to', { to });
-    }
+
     const q = query.q?.trim();
     if (q) {
       qb.andWhere(
@@ -70,7 +110,22 @@ export class OpsService {
       );
     }
 
-    const total = await qb.clone().getCount();
+    const totalsRow = await qb
+      .clone()
+      .select([
+        'COALESCE(SUM(m.broadcast_total), 0) AS "dispatchedTotal"',
+        'COALESCE(SUM(m.broadcast_delivered), 0) AS "deliveredTotal"',
+        'COALESCE(SUM(m.broadcast_accepted), 0) AS "acceptedTotal"',
+        'COUNT(*) AS "rowCount"',
+      ])
+      .getRawOne<{
+        dispatchedTotal: string;
+        deliveredTotal: string;
+        acceptedTotal: string;
+        rowCount: string;
+      }>();
+
+    const total = Number(totalsRow?.rowCount ?? 0);
     const rows = await qb
       .orderBy('m.scheduled_at', 'DESC')
       .offset((page - 1) * limit)
@@ -99,6 +154,12 @@ export class OpsService {
       page,
       limit,
       pageCount: Math.max(1, Math.ceil(total / limit)),
+      summary: {
+        dispatchedTotal: Number(totalsRow?.dispatchedTotal ?? 0),
+        deliveredTotal: Number(totalsRow?.deliveredTotal ?? 0),
+        acceptedTotal: Number(totalsRow?.acceptedTotal ?? 0),
+      },
+      timezone: 'America/Sao_Paulo',
     };
   }
 
@@ -107,6 +168,7 @@ export class OpsService {
     page?: number;
     limit?: number;
     status?: string;
+    date?: string;
   }) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 25));
@@ -134,6 +196,13 @@ export class OpsService {
 
     if (query.status?.trim()) {
       qb.andWhere('p.status = :status', { status: query.status.trim() });
+    }
+    if (query.date && /^\d{4}-\d{2}-\d{2}$/.test(query.date.trim())) {
+      const { start, end } = this.dayRange(query.date);
+      qb.andWhere('p.created_at >= :from AND p.created_at < :to', {
+        from: start,
+        to: end,
+      });
     }
     const q = query.q?.trim();
     if (q) {
@@ -185,6 +254,7 @@ export class OpsService {
       page,
       limit,
       pageCount: Math.max(1, Math.ceil(total / limit)),
+      timezone: 'America/Sao_Paulo',
     };
   }
 
@@ -193,47 +263,122 @@ export class OpsService {
     page?: number;
     limit?: number;
     success?: string;
+    date?: string;
     from?: string;
     to?: string;
   }) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 25));
-    const qb = this.logins.createQueryBuilder('a').orderBy('a.created_at', 'DESC');
+    const qb = this.logins
+      .createQueryBuilder('a')
+      .leftJoin(IbUser, 'u', 'u.id = a.user_id')
+      .select([
+        'a.id AS id',
+        'a.user_id AS "userId"',
+        'a.email AS email',
+        'a.success AS success',
+        'a.reason AS reason',
+        'a.ip AS ip',
+        'a.user_agent AS "userAgent"',
+        'a.token_hint AS "tokenHint"',
+        'a.created_at AS "createdAt"',
+        'u.name AS "userName"',
+      ])
+      .orderBy('a.created_at', 'DESC');
 
     if (query.success === 'true') qb.andWhere('a.success = true');
     if (query.success === 'false') qb.andWhere('a.success = false');
-    if (query.from) {
-      const from = new Date(query.from);
-      if (!Number.isNaN(from.getTime())) qb.andWhere('a.created_at >= :from', { from });
+
+    let day: string | null = null;
+    if (query.date && /^\d{4}-\d{2}-\d{2}$/.test(query.date.trim())) {
+      const range = this.dayRange(query.date);
+      day = range.day;
+      qb.andWhere('a.created_at >= :from AND a.created_at < :to', {
+        from: range.start,
+        to: range.end,
+      });
+    } else {
+      const { start, end } = this.rangeBounds(query.from, query.to);
+      if (start) qb.andWhere('a.created_at >= :from', { from: start });
+      if (end) qb.andWhere('a.created_at < :to', { to: end });
     }
-    if (query.to) {
-      const to = new Date(query.to);
-      if (!Number.isNaN(to.getTime())) qb.andWhere('a.created_at < :to', { to });
-    }
+
     const q = query.q?.trim();
     if (q) {
       qb.andWhere(
-        `(a.email ILIKE :q OR a.ip ILIKE :q OR a.reason ILIKE :q OR a.user_agent ILIKE :q)`,
+        `(a.email ILIKE :q OR a.ip ILIKE :q OR a.reason ILIKE :q OR a.user_agent ILIKE :q OR a.token_hint ILIKE :q OR u.name ILIKE :q)`,
         { q: `%${q}%` },
       );
     }
 
-    const [rows, total] = await qb.skip((page - 1) * limit).take(limit).getManyAndCount();
+    const total = await qb.clone().getCount();
+    const rows = await qb
+      .offset((page - 1) * limit)
+      .limit(limit)
+      .getRawMany();
+
+    // Se o filtro é um dia, resolve o token emitido no dia (por user/email)
+    // para linhas que não trouxerem token_hint próprio.
+    const dayTokenByKey = new Map<string, string>();
+    if (day) {
+      const { start, end } = this.dayRange(day);
+      const tokenRows = await this.logins
+        .createQueryBuilder('a')
+        .select([
+          'a.user_id AS "userId"',
+          'a.email AS email',
+          'a.token_hint AS "tokenHint"',
+          'a.created_at AS "createdAt"',
+        ])
+        .where('a.created_at >= :from AND a.created_at < :to', { from: start, to: end })
+        .andWhere('a.token_hint IS NOT NULL')
+        .orderBy('a.created_at', 'DESC')
+        .getRawMany<{
+          userId: string | null;
+          email: string;
+          tokenHint: string;
+          createdAt: Date;
+        }>();
+      for (const row of tokenRows) {
+        const keys = [
+          row.userId ? `u:${row.userId}` : null,
+          row.email ? `e:${String(row.email).toLowerCase()}` : null,
+        ].filter(Boolean) as string[];
+        for (const key of keys) {
+          if (!dayTokenByKey.has(key)) dayTokenByKey.set(key, row.tokenHint);
+        }
+      }
+    }
+
     return {
-      items: rows.map((row) => ({
-        id: row.id,
-        userId: row.userId,
-        email: row.email,
-        success: row.success,
-        reason: row.reason,
-        ip: row.ip,
-        userAgent: row.userAgent,
-        createdAt: row.createdAt,
-      })),
+      items: rows.map((row) => {
+        const own = (row.tokenHint as string | null) || null;
+        const dayToken =
+          own ||
+          (row.userId ? dayTokenByKey.get(`u:${row.userId}`) : undefined) ||
+          (row.email
+            ? dayTokenByKey.get(`e:${String(row.email).toLowerCase()}`)
+            : undefined) ||
+          null;
+        return {
+          id: row.id,
+          userId: row.userId,
+          email: row.email,
+          userName: row.userName,
+          success: row.success === true || row.success === 'true',
+          reason: row.reason,
+          ip: row.ip,
+          userAgent: row.userAgent,
+          tokenHint: own,
+          dayTokenHint: dayToken,
+          createdAt: row.createdAt,
+        };
+      }),
       total,
       page,
       limit,
       pageCount: Math.max(1, Math.ceil(total / limit)),
+      day,
       timezone: 'America/Sao_Paulo',
     };
   }

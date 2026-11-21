@@ -13,6 +13,7 @@ export class OpsController {
     @Query('status') status?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('date') date?: string,
   ) {
     return this.ops.listBroadcasts({
       q,
@@ -21,6 +22,7 @@ export class OpsController {
       status,
       from,
       to,
+      date,
     });
   }
 
@@ -30,12 +32,14 @@ export class OpsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('status') status?: string,
+    @Query('date') date?: string,
   ) {
     return this.ops.listPurchases({
       q,
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
       status,
+      date,
     });
   }
 
@@ -45,6 +49,7 @@ export class OpsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('success') success?: string,
+    @Query('date') date?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
@@ -53,6 +58,7 @@ export class OpsController {
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
       success,
+      date,
       from,
       to,
     });

@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import EmptyState from '../components/ui/EmptyState';
 import PageHeader from '../components/ui/PageHeader';
-import { TableSkeleton } from '../components/ui/Skeleton';
+import { StatSkeleton, TableSkeleton } from '../components/ui/Skeleton';
 import Spinner from '../components/ui/Spinner';
 import { api } from '../lib/api';
 
@@ -26,6 +26,11 @@ type Page = {
   page: number;
   limit: number;
   pageCount: number;
+  summary?: {
+    dispatchedTotal: number;
+    deliveredTotal: number;
+    acceptedTotal: number;
+  };
 };
 
 function formatSp(iso: string | null) {
@@ -43,20 +48,29 @@ function formatSp(iso: string | null) {
 export default function BroadcastHistoryPage() {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const [page, setPage] = useState(1);
   const [data, setData] = useState<Page | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  async function load(p = page) {
+  async function load(
+    p = page,
+    range?: { from?: string; to?: string },
+  ) {
     setLoading(true);
     try {
+      const fromVal = range?.from !== undefined ? range.from : from;
+      const toVal = range?.to !== undefined ? range.to : to;
       const qs = new URLSearchParams({
         page: String(p),
         limit: '25',
       });
       if (q.trim()) qs.set('q', q.trim());
       if (status) qs.set('status', status);
+      if (fromVal) qs.set('from', fromVal);
+      if (toVal) qs.set('to', toVal);
       setData(await api<Page>(`/ops/broadcasts?${qs}`));
       setError('');
       setPage(p);
@@ -76,14 +90,53 @@ export default function BroadcastHistoryPage() {
     void load(1);
   }
 
+  const summary = data?.summary;
+
   return (
     <div>
       <PageHeader
         title="Consumo histórico"
-        subtitle="Todos os disparos WhatsApp — busca, status e paginação (America/Sao_Paulo)."
+        subtitle="Disparos WhatsApp — totais do filtro, intervalo de datas (SP) e paginação."
       />
 
+      <div className="grid-stats" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+        {loading && !data ? (
+          <>
+            <StatSkeleton />
+            <StatSkeleton />
+          </>
+        ) : (
+          <>
+            <div className="panel stat fade-up">
+              <div className="label">Disparados (total)</div>
+              <div className="value">
+                {(summary?.dispatchedTotal ?? 0).toLocaleString('pt-BR')}
+              </div>
+            </div>
+            <div className="panel stat fade-up" style={{ animationDelay: '40ms' }}>
+              <div className="label">Entregues (total)</div>
+              <div className="value">
+                {(summary?.deliveredTotal ?? 0).toLocaleString('pt-BR')}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
       <form className="toolbar fade-up" onSubmit={onSubmit}>
+        <input
+          type="date"
+          value={from}
+          onChange={(e) => setFrom(e.target.value)}
+          title="De (SP)"
+        />
+        <span className="muted">→</span>
+        <input
+          type="date"
+          value={to}
+          onChange={(e) => setTo(e.target.value)}
+          title="Até (SP, inclusivo)"
+        />
         <input
           style={{ flex: 1 }}
           value={q}
@@ -103,6 +156,20 @@ export default function BroadcastHistoryPage() {
         <button type="submit" disabled={loading} className="shiny">
           {loading ? <Spinner size={16} label="Filtrando…" /> : 'Filtrar'}
         </button>
+        {from || to ? (
+          <button
+            type="button"
+            className="secondary"
+            disabled={loading}
+            onClick={() => {
+              setFrom('');
+              setTo('');
+              void load(1, { from: '', to: '' });
+            }}
+          >
+            Limpar datas
+          </button>
+        ) : null}
       </form>
 
       {error ? <p className="error">{error}</p> : null}
@@ -114,7 +181,7 @@ export default function BroadcastHistoryPage() {
           <EmptyState
             icon="search"
             title="Nenhum disparo"
-            hint="Ajuste os filtros ou tente outro termo."
+            hint="Ajuste o intervalo ou outros filtros."
           />
         ) : (
           <>
@@ -126,7 +193,7 @@ export default function BroadcastHistoryPage() {
                     <th>Usuário</th>
                     <th>Status</th>
                     <th>Provider</th>
-                    <th>Aceitos/Total</th>
+                    <th>Aceitos / Entregues / Total</th>
                     <th>Quando (SP)</th>
                   </tr>
                 </thead>
@@ -146,7 +213,8 @@ export default function BroadcastHistoryPage() {
                       </td>
                       <td className="mono">{row.provider || '—'}</td>
                       <td className="mono">
-                        {row.accepted.toLocaleString('pt-BR')}/
+                        {row.accepted.toLocaleString('pt-BR')} /{' '}
+                        {row.delivered.toLocaleString('pt-BR')} /{' '}
                         {row.total.toLocaleString('pt-BR')}
                         {row.failed > 0 ? (
                           <span className="muted"> · fail {row.failed}</span>
@@ -161,6 +229,13 @@ export default function BroadcastHistoryPage() {
             <div className="pager" style={{ justifyContent: 'space-between' }}>
               <span className="muted">
                 {data.total.toLocaleString('pt-BR')} registro(s)
+                {summary ? (
+                  <>
+                    {' '}
+                    · aceitos{' '}
+                    {summary.acceptedTotal.toLocaleString('pt-BR')}
+                  </>
+                ) : null}
               </span>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <button

@@ -52,17 +52,20 @@ function formatSp(iso: string | null) {
 export default function PurchasesPage() {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
+  const [date, setDate] = useState('');
   const [page, setPage] = useState(1);
   const [data, setData] = useState<Page | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  async function load(p = page) {
+  async function load(p = page, dateOverride?: string) {
     setLoading(true);
     try {
+      const day = dateOverride !== undefined ? dateOverride : date;
       const qs = new URLSearchParams({ page: String(p), limit: '25' });
       if (q.trim()) qs.set('q', q.trim());
       if (status) qs.set('status', status);
+      if (day) qs.set('date', day);
       setData(await api<Page>(`/ops/purchases?${qs}`));
       setError('');
       setPage(p);
@@ -86,10 +89,16 @@ export default function PurchasesPage() {
     <div>
       <PageHeader
         title="Compras Stripe"
-        subtitle="Pacotes de cota WhatsApp Meta — status, valor e link no Dashboard."
+        subtitle="Pacotes de cota WhatsApp Meta — status, valor e link no Dashboard. Filtre por um dia (SP) se quiser."
       />
 
       <form className="toolbar fade-up" onSubmit={onSubmit}>
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          title="Filtrar dia (SP) — vazio = todos"
+        />
         <input
           style={{ flex: 1 }}
           value={q}
@@ -106,6 +115,19 @@ export default function PurchasesPage() {
         <button type="submit" disabled={loading} className="shiny">
           {loading ? <Spinner size={16} label="Filtrando…" /> : 'Filtrar'}
         </button>
+        {date ? (
+          <button
+            type="button"
+            className="secondary"
+            disabled={loading}
+            onClick={() => {
+              setDate('');
+              void load(1, '');
+            }}
+          >
+            Limpar data
+          </button>
+        ) : null}
       </form>
 
       {error ? <p className="error">{error}</p> : null}
@@ -190,6 +212,7 @@ export default function PurchasesPage() {
             <div className="pager" style={{ justifyContent: 'space-between' }}>
               <span className="muted">
                 {data.total.toLocaleString('pt-BR')} registro(s)
+                {date ? ` · ${date}` : ''}
               </span>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <button
