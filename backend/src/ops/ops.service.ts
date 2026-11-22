@@ -287,6 +287,10 @@ export class OpsService {
     };
   }
 
+  /**
+   * Contas únicas que mexeram no site no período (1 linha por user/e-mail).
+   * Não lista cada `api_activity` — só a última atividade + quantas ações no filtro.
+   */
   async listLogins(query: {
     q?: string;
     page?: number;
@@ -315,6 +319,7 @@ export class OpsService {
           pageCount: 1,
           day: null,
           timezone: 'America/Sao_Paulo',
+          uniqueAccounts: true,
           warning: 'Tabela user_login_audits ainda não existe no banco.',
         };
       }
@@ -327,124 +332,165 @@ export class OpsService {
         pageCount: 1,
         day: null,
         timezone: 'America/Sao_Paulo',
+        uniqueAccounts: true,
         warning: 'Não foi possível ler user_login_audits.',
       };
     }
 
     const hasTokenHint = await this.ensureTokenHintColumn();
-
-    const selectCols = [
-      'a.id AS id',
-      'a.user_id AS "userId"',
-      'a.email AS email',
-      'a.success AS success',
-      'a.reason AS reason',
-      'a.ip AS ip',
-      'a.user_agent AS "userAgent"',
-      'a.created_at AS "createdAt"',
-      'u.name AS "userName"',
-    ];
-    if (hasTokenHint) selectCols.splice(7, 0, 'a.token_hint AS "tokenHint"');
-
-    const qb = this.logins
-      .createQueryBuilder('a')
-      .leftJoin(IbUser, 'u', 'u.id = a.user_id')
-      .select(selectCols)
-      .orderBy('a.created_at', 'DESC');
-
-    if (query.success === 'true') qb.andWhere('a.success = true');
-    if (query.success === 'false') qb.andWhere('a.success = false');
+    const params: unknown[] = [];
+    const where: string[] = ['1=1'];
 
     let day: string | null = null;
     if (query.date && /^\d{4}-\d{2}-\d{2}$/.test(query.date.trim())) {
       const range = this.dayRange(query.date);
       day = range.day;
-      qb.andWhere('a.created_at >= :from AND a.created_at < :to', {
-        from: range.start,
-        to: range.end,
-      });
+      params.push(range.start, range.end);
+      where.push(
+        `a.created_at >= $${params.length - 1} AND a.created_at < $${params.length}`,
+      );
     } else {
       const { start, end } = this.rangeBounds(query.from, query.to);
-      if (start) qb.andWhere('a.created_at >= :from', { from: start });
-      if (end) qb.andWhere('a.created_at < :to', { to: end });
+      if (start) {
+        params.push(start);
+        where.push(`a.created_at >= $${params.length}`);
+      }
+      if (end) {
+        params.push(end);
+        where.push(`a.created_at < $${params.length}`);
+      }
     }
+
+    if (query.success === 'true') where.push('a.success = true');
+    if (query.success === 'false') where.push('a.success = false');
 
     const q = query.q?.trim();
     if (q) {
-      const tokenClause = hasTokenHint ? ' OR a.token_hint ILIKE :q' : '';
-      qb.andWhere(
-        `(a.email ILIKE :q OR a.ip ILIKE :q OR a.reason ILIKE :q OR a.user_agent ILIKE :q OR u.name ILIKE :q${tokenClause})`,
-        { q: `%${q}%` },
+      params.push(`%${q}%`);
+      const qi = params.length;
+      const tokenClause = hasTokenHint ? ` OR a.token_hint ILIKE $${qi}` : '';
+      where.push(
+        `(a.email ILIKE $${qi} OR a.ip ILIKE $${qi} OR COALESCE(a.reason, '') ILIKE $${qi} OR COALESCE(a.user_agent, '') ILIKE $${qi} OR COALESCE(u.name, '') ILIKE $${qi}${tokenClause})`,
       );
     }
 
-    const total = await qb.clone().getCount();
-    const rows = await qb
-      .offset((page - 1) * limit)
-      .limit(limit)
-      .getRawMany();
+    const tokenCol = hasTokenHint ? 'a.token_hint' : 'NULL::varchar';
+    const whereSql = where.join(' AND ');
 
-    const dayTokenByKey = new Map<string, string>();
-    if (day && hasTokenHint) {
-      const { start, end } = this.dayRange(day);
-      const tokenRows = await this.logins
-        .createQueryBuilder('a')
-        .select([
-          'a.user_id AS "userId"',
-          'a.email AS email',
-          'a.token_hint AS "tokenHint"',
-          'a.created_at AS "createdAt"',
-        ])
-        .where('a.created_at >= :from AND a.created_at < :to', { from: start, to: end })
-        .andWhere('a.token_hint IS NOT NULL')
-        .orderBy('a.created_at', 'DESC')
-        .getRawMany<{
-          userId: string | null;
-          email: string;
-          tokenHint: string;
-          createdAt: Date;
-        }>();
-      for (const row of tokenRows) {
-        const keys = [
-          row.userId ? `u:${row.userId}` : null,
-          row.email ? `e:${String(row.email).toLowerCase()}` : null,
-        ].filter(Boolean) as string[];
-        for (const key of keys) {
-          if (!dayTokenByKey.has(key)) dayTokenByKey.set(key, row.tokenHint);
-        }
-      }
-    }
+    const countRows: Array<{ total: string | number }> = await this.logins.query(
+      `
+      SELECT COUNT(*)::int AS total
+      FROM (
+        SELECT DISTINCT COALESCE(a.user_id::text, 'e:' || lower(a.email)) AS account_key
+        FROM user_login_audits a
+        LEFT JOIN users u ON u.id = a.user_id
+        WHERE ${whereSql}
+      ) t
+      `,
+      params,
+    );
+    const total = Number(countRows?.[0]?.total ?? 0);
+
+    const offset = (page - 1) * limit;
+    params.push(limit);
+    const limitIdx = params.length;
+    params.push(offset);
+    const offsetIdx = params.length;
+
+    const rows: Array<Record<string, unknown>> = await this.logins.query(
+      `
+      WITH base AS (
+        SELECT
+          a.id,
+          a.user_id,
+          a.email,
+          a.success,
+          a.reason,
+          a.ip,
+          a.user_agent,
+          ${tokenCol} AS token_hint,
+          a.created_at,
+          u.name AS user_name,
+          COALESCE(a.user_id::text, 'e:' || lower(a.email)) AS account_key
+        FROM user_login_audits a
+        LEFT JOIN users u ON u.id = a.user_id
+        WHERE ${whereSql}
+      ),
+      counts AS (
+        SELECT
+          account_key,
+          COUNT(*)::int AS action_count,
+          MIN(created_at) AS first_at,
+          MAX(created_at) AS last_at
+        FROM base
+        GROUP BY account_key
+      ),
+      latest AS (
+        SELECT DISTINCT ON (account_key)
+          id, user_id, email, success, reason, ip, user_agent, token_hint,
+          created_at, user_name, account_key
+        FROM base
+        ORDER BY account_key, created_at DESC
+      ),
+      day_token AS (
+        SELECT DISTINCT ON (account_key)
+          account_key, token_hint
+        FROM base
+        WHERE token_hint IS NOT NULL
+        ORDER BY account_key, created_at DESC
+      )
+      SELECT
+        l.id AS id,
+        l.user_id AS "userId",
+        l.email AS email,
+        l.user_name AS "userName",
+        l.success AS success,
+        l.reason AS reason,
+        l.ip AS ip,
+        l.user_agent AS "userAgent",
+        l.token_hint AS "tokenHint",
+        COALESCE(l.token_hint, dt.token_hint) AS "dayTokenHint",
+        l.created_at AS "createdAt",
+        c.first_at AS "firstAt",
+        c.last_at AS "lastAt",
+        c.action_count AS "actionCount"
+      FROM latest l
+      JOIN counts c ON c.account_key = l.account_key
+      LEFT JOIN day_token dt ON dt.account_key = l.account_key
+      ORDER BY c.last_at DESC
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
+      `,
+      params,
+    );
 
     return {
       items: rows.map((row) => {
         const own = hasTokenHint ? ((row.tokenHint as string | null) || null) : null;
-        const dayToken =
-          own ||
-          (row.userId ? dayTokenByKey.get(`u:${row.userId}`) : undefined) ||
-          (row.email
-            ? dayTokenByKey.get(`e:${String(row.email).toLowerCase()}`)
-            : undefined) ||
-          null;
+        const dayToken = (row.dayTokenHint as string | null) || own;
         return {
           id: row.id,
           userId: row.userId,
           email: row.email,
           userName: row.userName,
-          success: row.success === true || row.success === 'true',
+          success: row.success === true || row.success === 't' || row.success === 'true',
           reason: row.reason,
           ip: row.ip,
           userAgent: row.userAgent,
           tokenHint: own,
           dayTokenHint: dayToken,
           createdAt: row.createdAt,
+          firstAt: row.firstAt,
+          lastAt: row.lastAt,
+          actionCount: Number(row.actionCount ?? 1),
         };
       }),
       total,
       page,
       limit,
-      pageCount: Math.max(1, Math.ceil(total / limit)),
+      pageCount: Math.max(1, Math.ceil(total / limit) || 1),
       day,
       timezone: 'America/Sao_Paulo',
+      uniqueAccounts: true,
     };
   }
 }

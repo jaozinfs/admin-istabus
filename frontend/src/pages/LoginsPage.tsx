@@ -16,6 +16,9 @@ type Item = {
   tokenHint: string | null;
   dayTokenHint: string | null;
   createdAt: string;
+  firstAt?: string | null;
+  lastAt?: string | null;
+  actionCount?: number;
 };
 
 type Page = {
@@ -25,6 +28,7 @@ type Page = {
   limit: number;
   pageCount: number;
   day: string | null;
+  uniqueAccounts?: boolean;
 };
 
 function todaySp(): string {
@@ -69,8 +73,8 @@ function reasonLabel(reason: string | null): string {
 export default function LoginsPage() {
   const [q, setQ] = useState('');
   const [success, setSuccess] = useState('');
-  // Vazio = todos os dias; o usuário pode filtrar um dia SP.
-  const [date, setDate] = useState('');
+  // Default: hoje SP — lista quem mexeu no site no dia (1 linha por conta).
+  const [date, setDate] = useState(todaySp);
   const [page, setPage] = useState(1);
   const [data, setData] = useState<Page | null>(null);
   const [loading, setLoading] = useState(true);
@@ -107,7 +111,7 @@ export default function LoginsPage() {
     <div>
       <PageHeader
         title="Logins diários"
-        subtitle="Logins e uso autenticado (qualquer chamada, a cada ~5 min) — quem está na sessão e o token do dia (America/Sao_Paulo)."
+        subtitle="Uma linha por conta: quem mexeu no site no dia (login ou uso autenticado). America/Sao_Paulo."
       />
 
       <form className="toolbar fade-up" onSubmit={onSubmit}>
@@ -115,7 +119,7 @@ export default function LoginsPage() {
           type="date"
           value={date}
           onChange={(e) => setDate(e.target.value)}
-          title="Dia (SP) — vazio = todos"
+          title="Dia (SP) — vazio = todos os períodos (ainda 1 conta por linha)"
         />
         <input
           style={{ flex: 1 }}
@@ -167,8 +171,8 @@ export default function LoginsPage() {
         ) : !data?.items.length ? (
           <EmptyState
             icon="inbox"
-            title="Nenhum login auditado"
-            hint="Sem linhas nesse dia, ou os filtros não bateram."
+            title="Nenhuma conta ativa"
+            hint="Ninguém mexeu no site nesse dia, ou os filtros não bateram."
           />
         ) : (
           <>
@@ -177,8 +181,8 @@ export default function LoginsPage() {
                 <thead>
                   <tr>
                     <th>Quem</th>
-                    <th>Resultado</th>
-                    <th>Motivo</th>
+                    <th>Última atividade</th>
+                    <th>Ações no período</th>
                     <th>Token</th>
                     <th>IP</th>
                     <th>Quando (SP)</th>
@@ -187,8 +191,9 @@ export default function LoginsPage() {
                 <tbody>
                   {data.items.map((row) => {
                     const token = row.tokenHint || row.dayTokenHint;
+                    const when = row.lastAt || row.createdAt;
                     return (
-                      <tr key={row.id}>
+                      <tr key={String(row.id)}>
                         <td>
                           <div>{row.userName || '—'}</div>
                           <div className="muted">{row.email}</div>
@@ -203,12 +208,11 @@ export default function LoginsPage() {
                           <span className={`badge ${row.success ? 'ok' : 'danger'}`}>
                             {row.success ? 'Sucesso' : 'Falha / desafio'}
                           </span>
-                        </td>
-                        <td>
-                          <span className="mono" title={row.reason || undefined}>
+                          <div className="muted" title={row.reason || undefined}>
                             {reasonLabel(row.reason)}
-                          </span>
+                          </div>
                         </td>
+                        <td className="mono">{row.actionCount ?? 1}</td>
                         <td>
                           {token ? (
                             <span className="mono" title={token}>
@@ -222,7 +226,7 @@ export default function LoginsPage() {
                           ) : null}
                         </td>
                         <td className="mono">{row.ip || '—'}</td>
-                        <td className="mono">{formatSp(row.createdAt)}</td>
+                        <td className="mono">{formatSp(String(when))}</td>
                       </tr>
                     );
                   })}
@@ -231,7 +235,7 @@ export default function LoginsPage() {
             </div>
             <div className="pager" style={{ justifyContent: 'space-between' }}>
               <span className="muted">
-                {data.total.toLocaleString('pt-BR')} registro(s)
+                {data.total.toLocaleString('pt-BR')} conta(s)
                 {data.day ? ` · ${data.day}` : ''}
               </span>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
