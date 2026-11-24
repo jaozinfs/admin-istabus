@@ -520,6 +520,42 @@ th {
   gap: 1rem;
 }
 
+.activity-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin: 0 0 1rem;
+}
+
+.activity-grid .activity-timeline {
+  grid-column: 1 / -1;
+}
+
+.meta-dl {
+  margin: 0.75rem 0 0;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.meta-dl > div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.meta-dl dt {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.meta-dl dd {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
 .quota-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1106,6 +1142,7 @@ button.secondary .spinner,
   }
 
   .detail-grid,
+  .activity-grid,
   .quota-grid {
     grid-template-columns: 1fr;
   }

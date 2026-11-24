@@ -3,7 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Repository } from 'typeorm';
 import { IbCompany } from '../entities/ib-company.entity';
 import { IbUser } from '../entities/ib-user.entity';
+import { IbUserLoginAudit } from '../entities/ib-user-login-audit.entity';
 import { UpdatePlanDto } from './dto/update-plan.dto';
+import { IpGeoService } from './ip-geo.service';
+import { labelApiPath } from './page-label.util';
 import {
   isActiveStatus,
   mapQuotas,
@@ -14,12 +17,212 @@ import { StripeMetaService } from './stripe-meta.service';
 
 @Injectable()
 export class AccountsService {
+  private pathColumnReady: boolean | null = null;
+
   constructor(
     @InjectRepository(IbUser) private readonly users: Repository<IbUser>,
     @InjectRepository(IbCompany)
     private readonly companiesRepo: Repository<IbCompany>,
+    @InjectRepository(IbUserLoginAudit)
+    private readonly logins: Repository<IbUserLoginAudit>,
     private readonly stripeMeta: StripeMetaService,
+    private readonly ipGeo: IpGeoService,
   ) {}
+
+  private dayRange(date?: string) {
+    const tz = 'America/Sao_Paulo';
+    const day =
+      date && /^\d{4}-\d{2}-\d{2}$/.test(date.trim())
+        ? date.trim()
+        : new Intl.DateTimeFormat('en-CA', {
+            timeZone: tz,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          }).format(new Date());
+    const start = new Date(`${day}T00:00:00-03:00`);
+    const end = new Date(`${day}T24:00:00-03:00`);
+    return { start, end, day, timezone: tz };
+  }
+
+  /** Shared DB: migration InstaBuss pode ainda não ter criado `path`. */
+  private async ensurePathColumn(): Promise<boolean> {
+    if (this.pathColumnReady != null) return this.pathColumnReady;
+    try {
+      await this.logins.query(`
+        ALTER TABLE "user_login_audits"
+        ADD COLUMN IF NOT EXISTS "path" character varying(256)
+      `);
+      this.pathColumnReady = true;
+    } catch {
+      try {
+        const rows: Array<{ exists: boolean }> = await this.logins.query(`
+          SELECT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'user_login_audits'
+              AND column_name = 'path'
+          ) AS "exists"
+        `);
+        this.pathColumnReady = Boolean(rows?.[0]?.exists);
+      } catch {
+        this.pathColumnReady = false;
+      }
+    }
+    return this.pathColumnReady;
+  }
+
+  private async loadUserActivity(userId: string, email: string) {
+    const { start, end, day, timezone } = this.dayRange();
+    const hasPath = await this.ensurePathColumn();
+
+    let accesses: Array<{
+      id: string;
+      success: boolean;
+      reason: string | null;
+      ip: string | null;
+      userAgent: string | null;
+      tokenHint: string | null;
+      path: string | null;
+      createdAt: Date;
+    }> = [];
+
+    try {
+      const pathSelect = hasPath ? 'a.path AS path' : 'NULL::varchar AS path';
+      const rows: Array<Record<string, unknown>> = await this.logins.query(
+        `
+        SELECT
+          a.id AS id,
+          a.success AS success,
+          a.reason AS reason,
+          a.ip AS ip,
+          a.user_agent AS "userAgent",
+          a.token_hint AS "tokenHint",
+          ${pathSelect},
+          a.created_at AS "createdAt"
+        FROM user_login_audits a
+        WHERE a.created_at >= $1 AND a.created_at < $2
+          AND (a.user_id = $3 OR lower(a.email) = lower($4))
+        ORDER BY a.created_at DESC
+        LIMIT 80
+        `,
+        [start, end, userId, email],
+      );
+      accesses = rows.map((row) => ({
+        id: String(row.id),
+        success:
+          row.success === true ||
+          row.success === 't' ||
+          row.success === 'true',
+        reason: (row.reason as string | null) ?? null,
+        ip: (row.ip as string | null) ?? null,
+        userAgent: (row.userAgent as string | null) ?? null,
+        tokenHint: (row.tokenHint as string | null) ?? null,
+        path: (row.path as string | null) ?? null,
+        createdAt: row.createdAt as Date,
+      }));
+    } catch {
+      accesses = [];
+    }
+
+    let pages: Array<{
+      path: string;
+      label: string;
+      count: number;
+      lastAt: Date;
+    }> = [];
+    if (hasPath) {
+      try {
+        const pageRows: Array<Record<string, unknown>> = await this.logins.query(
+          `
+          SELECT
+            a.path AS path,
+            COUNT(*)::int AS count,
+            MAX(a.created_at) AS "lastAt"
+          FROM user_login_audits a
+          WHERE a.created_at >= $1 AND a.created_at < $2
+            AND (a.user_id = $3 OR lower(a.email) = lower($4))
+            AND a.path IS NOT NULL
+            AND length(trim(a.path)) > 0
+          GROUP BY a.path
+          ORDER BY MAX(a.created_at) DESC
+          LIMIT 40
+          `,
+          [start, end, userId, email],
+        );
+        pages = pageRows.map((row) => {
+          const path = String(row.path || '');
+          return {
+            path,
+            label: labelApiPath(path),
+            count: Number(row.count ?? 0),
+            lastAt: row.lastAt as Date,
+          };
+        });
+      } catch {
+        pages = [];
+      }
+    }
+
+    const latestIp =
+      accesses.find((a) => a.ip)?.ip ??
+      (
+        await this.logins
+          .createQueryBuilder('a')
+          .select('a.ip', 'ip')
+          .where('a.user_id = :userId OR lower(a.email) = lower(:email)', {
+            userId,
+            email,
+          })
+          .andWhere('a.ip IS NOT NULL')
+          .orderBy('a.created_at', 'DESC')
+          .limit(1)
+          .getRawOne<{ ip: string | null }>()
+          .catch(() => null)
+      )?.ip ??
+      null;
+
+    const geoLookup = await this.ipGeo.lookup(latestIp);
+    const successCount = accesses.filter((a) => a.success).length;
+    const failCount = accesses.length - successCount;
+    const firstAt =
+      accesses.length > 0
+        ? accesses.reduce(
+            (min, a) => (a.createdAt < min ? a.createdAt : min),
+            accesses[0].createdAt,
+          )
+        : null;
+    const lastAt = accesses[0]?.createdAt ?? null;
+
+    return {
+      day,
+      timezone,
+      location: {
+        ip: latestIp,
+        ...(geoLookup.geo ?? {
+          city: null,
+          region: null,
+          country: null,
+          countryCode: null,
+          isp: null,
+          label: null,
+        }),
+        status: geoLookup.status,
+      },
+      summary: {
+        actionCount: accesses.length,
+        successCount,
+        failCount,
+        firstAt,
+        lastAt,
+      },
+      accesses: accesses.map((a) => ({
+        ...a,
+        pathLabel: a.path ? labelApiPath(a.path) : null,
+      })),
+      pages,
+    };
+  }
 
   private async withEffective(
     billing: {
@@ -146,7 +349,10 @@ export class AccountsService {
     });
     if (!u) throw new NotFoundException('Usuário não encontrado');
     const billing = u.company ?? u;
-    const quotas = await this.withEffective(billing);
+    const [quotas, activity] = await Promise.all([
+      this.withEffective(billing),
+      this.loadUserActivity(u.id, u.email),
+    ]);
     return {
       user: {
         id: u.id,
@@ -183,6 +389,7 @@ export class AccountsService {
       quotasStored: quotas.raw,
       quotasEffective: quotas.effective,
       stripeMeta: quotas.stripeMeta,
+      activity,
     };
   }
 

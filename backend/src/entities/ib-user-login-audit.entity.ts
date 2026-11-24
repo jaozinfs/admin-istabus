@@ -31,6 +31,9 @@ export class IbUserLoginAudit {
   @Column({ name: 'token_hint', type: 'varchar', length: 64, nullable: true })
   tokenHint: string | null;
 
+  @Column({ type: 'varchar', length: 256, nullable: true })
+  path: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }
